@@ -33,6 +33,17 @@
     'rgb(83, 102, 255)',
   ]
 
+  /** Fatias no gráfico de pizza por IP; o restante vira “Outros”. */
+  const PIE_IP_MAX_SLICES = 22
+  const PIE_APP_MIN_REQUESTS = 100
+  const USER_AGENT_TABLE_MAX_ROWS = 400
+
+  function pieSliceColors(count) {
+    const out = []
+    for (let i = 0; i < count; i++) out.push(PALETTE[i % PALETTE.length])
+    return out
+  }
+
   if (typeof Chart !== 'undefined') {
     Chart.defaults.color = '#dee2e6'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.08)'
@@ -87,6 +98,9 @@
     CHART_IPS: 'chart-ips',
     TABLE_SLOW: 'table-slow',
     TABLE_HEAVY_URI: 'table-heavy-uri',
+    CHART_PIE_IP: 'chart-pie-ip',
+    CHART_PIE_APP: 'chart-pie-app',
+    TABLE_USER_AGENT: 'table-user-agent',
   }
 
   const ALLOWED_WIDGET_TYPES = new Set(Object.values(WIDGET_TYPES))
@@ -126,6 +140,11 @@
         { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_IPS, colSpan: 6, heightPx: 380 },
       ],
       [{ uid: genDashboardUid(), type: WIDGET_TYPES.TABLE_HEAVY_URI, colSpan: 12, heightPx: 480 }],
+      [
+        { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_PIE_IP, colSpan: 6, heightPx: 340 },
+        { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_PIE_APP, colSpan: 6, heightPx: 340 },
+      ],
+      [{ uid: genDashboardUid(), type: WIDGET_TYPES.TABLE_USER_AGENT, colSpan: 12, heightPx: 400 }],
       [{ uid: genDashboardUid(), type: WIDGET_TYPES.TABLE_SLOW, colSpan: 12, heightPx: 420 }],
     ]
   }
@@ -221,6 +240,8 @@
     if (type === WIDGET_TYPES.CHART_TIMELINE || type === WIDGET_TYPES.CHART_STATUS) return 340
     if (type === WIDGET_TYPES.CHART_ENDPOINTS || type === WIDGET_TYPES.CHART_IPS) return 380
     if (type === WIDGET_TYPES.TABLE_HEAVY_URI) return 480
+    if (type === WIDGET_TYPES.CHART_PIE_IP || type === WIDGET_TYPES.CHART_PIE_APP) return 340
+    if (type === WIDGET_TYPES.TABLE_USER_AGENT) return 400
     if (type === WIDGET_TYPES.TABLE_SLOW) return 420
     return 220
   }
@@ -805,6 +826,9 @@
         [WIDGET_TYPES.CHART_IPS]: 'IPs lentos',
         [WIDGET_TYPES.TABLE_SLOW]: 'Req. lentas',
         [WIDGET_TYPES.TABLE_HEAVY_URI]: 'TOP URIs (time-taken)',
+        [WIDGET_TYPES.CHART_PIE_IP]: 'Pizza — % req. por IP',
+        [WIDGET_TYPES.CHART_PIE_APP]: 'Pizza — % req. por aplicação (≥100)',
+        [WIDGET_TYPES.TABLE_USER_AGENT]: 'User-Agent',
       }
 
       const dashboardWidgetTitles = {
@@ -818,9 +842,13 @@
         [WIDGET_TYPES.CHART_IPS]: 'IPs com mais requisições lentas (limiar ms)',
         [WIDGET_TYPES.TABLE_SLOW]: 'Requisições mais lentas — tabela',
         [WIDGET_TYPES.TABLE_HEAVY_URI]: 'TOP 200 cs-uri-stem — time-taken (min / máx / médio / qtd.)',
+        [WIDGET_TYPES.CHART_PIE_IP]: 'Distribuição de requisições por IP cliente (% do total)',
+        [WIDGET_TYPES.CHART_PIE_APP]:
+          'Distribuição por aplicação (1º segmento) — só apps com ≥ 100 req.; % do total filtrado',
+        [WIDGET_TYPES.TABLE_USER_AGENT]: 'Total de requisições por cs(User-Agent)',
       }
 
-      const chartCanvasEls = { timeline: null, endpoint: null, slowIp: null }
+      const chartCanvasEls = { timeline: null, endpoint: null, slowIp: null, pieIp: null, pieApp: null }
 
       function bindChartCanvas(kind, el) {
         const prev = chartCanvasEls[kind]
@@ -1132,6 +1160,8 @@
       let chartTimeline = null
       let chartEndpoint = null
       let chartSlowIp = null
+      let chartPieIp = null
+      let chartPieApp = null
 
       function fmtBucket(ts) {
         return new Date(ts).toLocaleString('pt-BR', {
@@ -1154,6 +1184,14 @@
         if (chartSlowIp) {
           chartSlowIp.destroy()
           chartSlowIp = null
+        }
+        if (chartPieIp) {
+          chartPieIp.destroy()
+          chartPieIp = null
+        }
+        if (chartPieApp) {
+          chartPieApp.destroy()
+          chartPieApp = null
         }
       }
 
@@ -1292,6 +1330,71 @@
         else if (sk === 'count') arr.sort((a, b) => b.count - a.count)
         else arr.sort((a, b) => b.max - a.max)
         return arr.slice(0, 200)
+      })
+
+      const pieIpChart = computed(() => {
+        const list = baseRows.value
+        if (!list.length) return null
+        const total = list.length
+        const map = new Map()
+        for (const r of list) {
+          const ip = r.clientIp || '(sem IP)'
+          map.set(ip, (map.get(ip) || 0) + 1)
+        }
+        const arr = [...map.entries()].sort((a, b) => b[1] - a[1])
+        const top = arr.slice(0, PIE_IP_MAX_SLICES)
+        let rest = 0
+        for (let i = PIE_IP_MAX_SLICES; i < arr.length; i++) rest += arr[i][1]
+        const labels = top.map(([ip]) => (ip.length > 36 ? `${ip.slice(0, 34)}…` : ip))
+        const data = top.map(([, c]) => c)
+        if (rest > 0) {
+          const nRest = arr.length - PIE_IP_MAX_SLICES
+          labels.push(`Outros (${nRest} IP${nRest === 1 ? '' : 's'})`)
+          data.push(rest)
+        }
+        const percents = data.map((c) => (100 * c) / total)
+        return { labels, data, total, percents }
+      })
+
+      const pieAppChart = computed(() => {
+        const list = baseRows.value
+        if (!list.length) return null
+        const total = list.length
+        const map = new Map()
+        for (const r of list) {
+          const seg = stemApplication(r.stem)
+          const key = seg || APP_NONE
+          map.set(key, (map.get(key) || 0) + 1)
+        }
+        const filtered = [...map.entries()]
+          .filter(([, c]) => c >= PIE_APP_MIN_REQUESTS)
+          .sort((a, b) => b[1] - a[1])
+        if (!filtered.length) return null
+        const labels = filtered.map(([name]) =>
+          String(name).length > 40 ? `${String(name).slice(0, 38)}…` : String(name),
+        )
+        const data = filtered.map(([, c]) => c)
+        const percents = data.map((c) => (100 * c) / total)
+        return { labels, data, total, percents }
+      })
+
+      const userAgentTable = computed(() => {
+        const list = baseRows.value
+        if (!list.length) return []
+        const total = list.length
+        const map = new Map()
+        for (const r of list) {
+          const ua = (r.userAgent || '').trim() || '(vazio)'
+          map.set(ua, (map.get(ua) || 0) + 1)
+        }
+        return [...map.entries()]
+          .map(([userAgent, count]) => ({
+            userAgent,
+            count,
+            percent: (100 * count) / total,
+          }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, USER_AGENT_TABLE_MAX_ROWS)
       })
 
       function setHeavyUriSort(key) {
@@ -1500,6 +1603,105 @@
             },
           })
         }
+
+        const pieIp = pieIpChart.value
+        const cPieIp = chartCanvasEls.pieIp
+        if (chartPieIp) {
+          chartPieIp.destroy()
+          chartPieIp = null
+        }
+        if (cPieIp && pieIp) {
+          const bg = pieSliceColors(pieIp.labels.length)
+          chartPieIp = new Chart(cPieIp, {
+            type: 'pie',
+            data: {
+              labels: pieIp.labels,
+              datasets: [
+                {
+                  data: pieIp.data,
+                  backgroundColor: bg,
+                  borderColor: 'rgba(26, 29, 32, 0.9)',
+                  borderWidth: 1,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  position: 'right',
+                  labels: { color: textColor, boxWidth: 12, font: { size: 10 } },
+                },
+                tooltip: {
+                  callbacks: {
+                    label(ctx) {
+                      const i = ctx.dataIndex
+                      const n = pieIp.data[i]
+                      const p = pieIp.percents[i]
+                      const pct = Number.isFinite(p)
+                        ? p.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : '—'
+                      return `${n.toLocaleString('pt-BR')} req. (${pct}% do total)`
+                    },
+                  },
+                },
+              },
+            },
+          })
+        }
+
+        const pieApp = pieAppChart.value
+        const cPieApp = chartCanvasEls.pieApp
+        if (chartPieApp) {
+          chartPieApp.destroy()
+          chartPieApp = null
+        }
+        if (cPieApp && pieApp) {
+          const bg = pieSliceColors(pieApp.labels.length)
+          chartPieApp = new Chart(cPieApp, {
+            type: 'pie',
+            data: {
+              labels: pieApp.labels,
+              datasets: [
+                {
+                  data: pieApp.data,
+                  backgroundColor: bg,
+                  borderColor: 'rgba(26, 29, 32, 0.9)',
+                  borderWidth: 1,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  position: 'right',
+                  labels: { color: textColor, boxWidth: 12, font: { size: 10 } },
+                },
+                tooltip: {
+                  callbacks: {
+                    label(ctx) {
+                      const i = ctx.dataIndex
+                      const n = pieApp.data[i]
+                      const p = pieApp.percents[i]
+                      const pct = Number.isFinite(p)
+                        ? p.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : '—'
+                      return `${n.toLocaleString('pt-BR')} req. (${pct}% do total)`
+                    },
+                  },
+                },
+              },
+            },
+          })
+        }
+      }
+
+      function fmtPercent(n) {
+        if (!Number.isFinite(n)) return '—'
+        return `${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`
       }
 
       watch(
@@ -1521,6 +1723,8 @@
           chartTimeline?.resize()
           chartEndpoint?.resize()
           chartSlowIp?.resize()
+          chartPieIp?.resize()
+          chartPieApp?.resize()
         })
       })
 
@@ -1539,7 +1743,17 @@
       })
 
       watch(
-        [stats, timelineSeries, endpointChart, slowIpChart, slowThresholdMs, ipFilter, applicationFilter],
+        [
+          stats,
+          timelineSeries,
+          endpointChart,
+          slowIpChart,
+          pieIpChart,
+          pieAppChart,
+          slowThresholdMs,
+          ipFilter,
+          applicationFilter,
+        ],
         () => {
           updateCharts()
         },
@@ -1812,8 +2026,11 @@
         timelineSeries,
         endpointChart,
         slowIpChart,
+        pieIpChart,
+        pieAppChart,
         statusBreakdown,
         slowTable,
+        userAgentTable,
         heavyUriSortKey,
         heavyUriUseGrouping,
         heavyUriTop200,
@@ -1827,6 +2044,7 @@
         onModalEndpointAppChange,
         onStaticExtIncludedChange,
         onEndpointStemIncludedChange,
+        fmtPercent,
         fmtBucket,
         loadFromText,
         consumeFile,

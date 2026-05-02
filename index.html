@@ -449,6 +449,68 @@
                     </div>
                   </div>
                 </template>
+                <template v-else-if="item.type === 'chart-pie-ip'">
+                  <div
+                    class="card-body chart-card flex-grow-1 p-0"
+                    :style="
+                      expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 340) + 'px' }
+                    "
+                  >
+                    <canvas v-if="pieIpChart" :ref="(el) => bindChartCanvas('pieIp', el)"></canvas>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'chart-pie-app'">
+                  <div class="card-body flex-grow-1 p-0 d-flex flex-column min-h-0-flex">
+                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">
+                      Apenas aplicações com ≥ 100 requisições no filtro atual. Percentual sobre o total de linhas
+                      exibidas (tráfego de apps excluídos não entra nas fatias).
+                    </p>
+                    <div
+                      class="chart-card px-0 flex-grow-1 min-h-0-flex"
+                      :style="
+                        expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 340) + 'px' }
+                      "
+                    >
+                      <canvas v-if="pieAppChart" :ref="(el) => bindChartCanvas('pieApp', el)"></canvas>
+                      <p v-else class="text-secondary small p-3 mb-0">
+                        Nenhuma aplicação com pelo menos 100 requisições neste conjunto filtrado.
+                      </p>
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'table-user-agent'">
+                  <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
+                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">
+                      Até {{ userAgentTable.length }} user-agents distintos (ordenados por total). Percentual sobre
+                      todas as requisições do filtro atual.
+                    </p>
+                    <div
+                      class="table-responsive flex-grow-1 min-h-0-flex"
+                      :style="
+                        expandedWidgetUid === item.uid
+                          ? {}
+                          : { maxHeight: (item.heightPx || 400) + 'px' }
+                      "
+                    >
+                      <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
+                        <thead>
+                          <tr>
+                            <th>cs(User-Agent)</th>
+                            <th class="text-end">Total</th>
+                            <th class="text-end">Percentual</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(row, idx) in userAgentTable" :key="idx + '\t' + row.userAgent.slice(0, 80)">
+                            <td class="small text-break" :title="row.userAgent">{{ row.userAgent }}</td>
+                            <td class="text-end small">{{ row.count.toLocaleString('pt-BR') }}</td>
+                            <td class="text-end small">{{ fmtPercent(row.percent) }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </template>
                 <template v-else-if="item.type === 'table-heavy-uri'">
                   <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex position-relative">
                     <div
@@ -543,7 +605,8 @@
                     layoutEditMode &&
                     (item.type.startsWith('chart-') ||
                       item.type === 'table-slow' ||
-                      item.type === 'table-heavy-uri')
+                      item.type === 'table-heavy-uri' ||
+                      item.type === 'table-user-agent')
                   "
                   class="widget-resize-handle"
                   title="Arrastar para alterar altura"
