@@ -403,3 +403,11 @@ body.iis-layout-arranging .dashboard-dd-strip-hint {
   background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(1px);
 }
+
+.iis-ua-col-icon {
+  width: 2.25rem;
+}
+
+.iis-ua-original-hint {
+  cursor: help;
+}

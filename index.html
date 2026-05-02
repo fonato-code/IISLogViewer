@@ -481,8 +481,10 @@
                 <template v-else-if="item.type === 'table-user-agent'">
                   <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
                     <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">
-                      Até {{ userAgentTable.length }} user-agents distintos (ordenados por total). Percentual sobre
-                      todas as requisições do filtro atual.
+                      Até {{ userAgentTable.length }} user-agents distintos (ordenados por total). Colunas derivadas
+                      por heurística a partir do cabeçalho; passe o mouse no ícone
+                      <i class="fas fa-info-circle text-info" aria-hidden="true"></i> para ver o
+                      <code>cs(User-Agent)</code> bruto. Percentual sobre todas as requisições do filtro atual.
                     </p>
                     <div
                       class="table-responsive flex-grow-1 min-h-0-flex"
@@ -495,14 +497,36 @@
                       <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
                         <thead>
                           <tr>
-                            <th>cs(User-Agent)</th>
-                            <th class="text-end">Total</th>
-                            <th class="text-end">Percentual</th>
+                            <th class="text-center iis-ua-col-icon" scope="col" title="Coluna com ícone: tooltip = UA bruto">
+                              <span class="visually-hidden">UA bruto</span>
+                            </th>
+                            <th scope="col">Navegador</th>
+                            <th scope="col">Versão</th>
+                            <th scope="col">Base</th>
+                            <th scope="col">SO</th>
+                            <th scope="col">Tipo</th>
+                            <th class="text-end" scope="col">Total</th>
+                            <th class="text-end" scope="col">Percentual</th>
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="(row, idx) in userAgentTable" :key="idx + '\t' + row.userAgent.slice(0, 80)">
-                            <td class="small text-break" :title="row.userAgent">{{ row.userAgent }}</td>
+                          <tr v-for="(row, idx) in userAgentTable" :key="idx + '\t' + String(row.userAgent).slice(0, 64)">
+                            <td class="text-center align-middle">
+                              <span
+                                class="iis-ua-original-hint d-inline-flex text-info"
+                                :title="row.userAgent"
+                                role="button"
+                                tabindex="0"
+                                aria-label="Ver User-Agent original no tooltip"
+                              >
+                                <i class="fas fa-info-circle" aria-hidden="true"></i>
+                              </span>
+                            </td>
+                            <td class="small">{{ row.browser }}</td>
+                            <td class="small text-nowrap">{{ row.version }}</td>
+                            <td class="small">{{ row.base }}</td>
+                            <td class="small">{{ row.os }}</td>
+                            <td class="small">{{ row.type }}</td>
                             <td class="text-end small">{{ row.count.toLocaleString('pt-BR') }}</td>
                             <td class="text-end small">{{ fmtPercent(row.percent) }}</td>
                           </tr>

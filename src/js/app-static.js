@@ -44,6 +44,123 @@
     return out
   }
 
+  /** Motor comum aos browsers Chromium (Chrome, Edge, Opera, etc.). */
+  const UA_BASE_CHROMIUM = 'Chromium'
+
+  /**
+   * Deriva colunas a partir de cs(User-Agent) (heurística; UAs truncados no log podem perder o SO explícito).
+   */
+  function parseUserAgentDetails(raw) {
+    const ua = raw == null ? '' : String(raw).trim()
+    const dash = { browser: '—', version: '—', base: '—', os: '—', type: '—' }
+    if (!ua || ua === '(vazio)') return dash
+
+    let browser = 'Outro / desconhecido'
+    let version = '—'
+    let base = '—'
+    let os = '—'
+    let type = 'Desktop'
+    let m
+
+    if (/iPad\b/i.test(ua) && !/Mobile/i.test(ua)) type = 'Tablet'
+    else if (/iPad|Tablet/i.test(ua)) type = 'Tablet'
+    else if (/Mobile|iPhone|iPod|Android.*Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) type = 'Mobile'
+
+    const win64 = /Win64|WOW64|x64|amd64/i.test(ua)
+    if (/Windows NT 10\.0/i.test(ua)) os = win64 ? 'Windows 10/11 (64-bit)' : 'Windows 10/11'
+    else if (/Windows NT 6\.3/i.test(ua)) os = win64 ? 'Windows 8.1 (64-bit)' : 'Windows 8.1'
+    else if (/Windows NT 6\.2/i.test(ua)) os = win64 ? 'Windows 8 (64-bit)' : 'Windows 8'
+    else if (/Windows NT 6\.1/i.test(ua)) os = win64 ? 'Windows 7 (64-bit)' : 'Windows 7'
+    else if (/Windows NT 6\.0/i.test(ua)) os = 'Windows Vista'
+    else if (/Windows NT 5\.1/i.test(ua)) os = 'Windows XP'
+    else if (/Windows NT 10\b/i.test(ua)) os = win64 ? 'Windows 10/11 (64-bit)' : 'Windows 10/11'
+    else if (/Windows NT/i.test(ua)) os = 'Windows'
+    else if ((m = ua.match(/Android ([\d.]+)/i))) os = `Android ${m[1]}`
+    else if ((m = ua.match(/CPU (?:iPhone )?OS ([\d_]+)/i))) os = `iOS ${m[1].replace(/_/g, '.')}`
+    else if ((m = ua.match(/Mac OS X ([\d_]+)/i))) os = `macOS ${m[1].replace(/_/g, '.')}`
+    else if (/CrOS/i.test(ua)) os = 'Chrome OS'
+    else if (/Linux|X11/i.test(ua)) os = win64 ? 'Linux (64-bit)' : 'Linux'
+
+    /** Edge Android usa token EdgA/, não Edg/. */
+    if ((m = ua.match(/\bEdgA\/([\d.]+)/i))) {
+      browser = 'Microsoft Edge (Android)'
+      version = m[1]
+      base = UA_BASE_CHROMIUM
+      if (os === '—' && (m = ua.match(/Android ([\d.]+)/i))) os = `Android ${m[1]}`
+      type = 'Mobile'
+    } else if ((m = ua.match(/\bEdg\/([\d.]+)/i))) {
+      browser = 'Microsoft Edge'
+      version = m[1]
+      base = UA_BASE_CHROMIUM
+    } else if ((m = ua.match(/\bOPR\/([\d.]+)/i))) {
+      browser = 'Opera'
+      version = m[1]
+      base = UA_BASE_CHROMIUM
+    } else if ((m = ua.match(/\bSamsungBrowser\/([\d.]+)/i))) {
+      browser = 'Samsung Internet'
+      version = m[1]
+      base = UA_BASE_CHROMIUM
+    } else if ((m = ua.match(/\bFxiOS\/([\d.]+)/i))) {
+      browser = 'Firefox (iOS)'
+      version = m[1]
+      base = 'Gecko'
+    } else if ((m = ua.match(/\bFirefox\/([\d.]+)/i))) {
+      browser = 'Mozilla Firefox'
+      version = m[1]
+      base = 'Gecko'
+    } else if ((m = ua.match(/\b(?:MSIE |Trident\/.*rv:)([\d.]+)/i))) {
+      browser = 'Internet Explorer'
+      version = m[1]
+      base = 'Trident'
+    } else if ((m = ua.match(/\bEdge\/([\d.]+)/i))) {
+      browser = 'Edge (legado)'
+      version = m[1]
+      base = 'EdgeHTML'
+    } else if ((m = ua.match(/\bCriOS\/([\d.]+)/i))) {
+      browser = 'Chrome (iOS)'
+      version = m[1]
+      base = UA_BASE_CHROMIUM
+    } else if ((m = ua.match(/\bChrome\/([\d.]+)/i))) {
+      browser = /Electron/i.test(ua)
+        ? 'Electron'
+        : /HeadlessChrome/i.test(ua)
+          ? 'Headless Chrome'
+          : /Chromium/i.test(ua)
+            ? 'Chromium'
+            : 'Google Chrome'
+      version = m[1]
+      base = UA_BASE_CHROMIUM
+    } else if (
+      (m = ua.match(/\bVersion\/([\d.]+)/i)) &&
+      /\bSafari/i.test(ua) &&
+      !/\b(?:Chrome|CriOS|Chromium)\b/i.test(ua)
+    ) {
+      browser = 'Safari'
+      version = m[1]
+      base = 'WebKit'
+    } else if ((m = ua.match(/\bcurl\/([\d.]+)/i))) {
+      browser = 'curl'
+      version = m[1]
+      base = '—'
+    } else if ((m = ua.match(/\bPostmanRuntime\/([\d.]+)/i))) {
+      browser = 'Postman'
+      version = m[1]
+      base = '—'
+    }
+
+    /** UA só com produto (sem “Mozilla/… (Windows…)”) — comum em agregações / logs truncados. */
+    if (
+      os === '—' &&
+      type === 'Desktop' &&
+      /\b(?:Chrome|Edg|Firefox|OPR|SamsungBrowser)\//i.test(ua) &&
+      !/\b(?:Android|iPhone|iPad|iPod|Linux|X11|CrOS|Mac OS X|CPU (?:iPhone )?OS)\b/i.test(ua)
+    ) {
+      os = win64 || /WOW64|Win64/i.test(ua) ? 'Windows 10+ (inferido, 64-bit)' : 'Windows 10+ (inferido)'
+    }
+
+    return { browser, version, base, os, type }
+  }
+
   if (typeof Chart !== 'undefined') {
     Chart.defaults.color = '#dee2e6'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.08)'
@@ -845,7 +962,7 @@
         [WIDGET_TYPES.CHART_PIE_IP]: 'Distribuição de requisições por IP cliente (% do total)',
         [WIDGET_TYPES.CHART_PIE_APP]:
           'Distribuição por aplicação (1º segmento) — só apps com ≥ 100 req.; % do total filtrado',
-        [WIDGET_TYPES.TABLE_USER_AGENT]: 'Total de requisições por cs(User-Agent)',
+        [WIDGET_TYPES.TABLE_USER_AGENT]: 'Requisições por User-Agent (detalhado)',
       }
 
       const chartCanvasEls = { timeline: null, endpoint: null, slowIp: null, pieIp: null, pieApp: null }
@@ -1388,11 +1505,15 @@
           map.set(ua, (map.get(ua) || 0) + 1)
         }
         return [...map.entries()]
-          .map(([userAgent, count]) => ({
-            userAgent,
-            count,
-            percent: (100 * count) / total,
-          }))
+          .map(([userAgent, count]) => {
+            const det = parseUserAgentDetails(userAgent)
+            return {
+              userAgent,
+              count,
+              percent: (100 * count) / total,
+              ...det,
+            }
+          })
           .sort((a, b) => b.count - a.count)
           .slice(0, USER_AGENT_TABLE_MAX_ROWS)
       })
