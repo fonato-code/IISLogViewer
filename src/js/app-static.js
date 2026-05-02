@@ -86,6 +86,7 @@
     CHART_ENDPOINTS: 'chart-endpoints',
     CHART_IPS: 'chart-ips',
     TABLE_SLOW: 'table-slow',
+    TABLE_HEAVY_URI: 'table-heavy-uri',
   }
 
   const ALLOWED_WIDGET_TYPES = new Set(Object.values(WIDGET_TYPES))
@@ -124,6 +125,7 @@
         { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_ENDPOINTS, colSpan: 6, heightPx: 380 },
         { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_IPS, colSpan: 6, heightPx: 380 },
       ],
+      [{ uid: genDashboardUid(), type: WIDGET_TYPES.TABLE_HEAVY_URI, colSpan: 12, heightPx: 480 }],
       [{ uid: genDashboardUid(), type: WIDGET_TYPES.TABLE_SLOW, colSpan: 12, heightPx: 420 }],
     ]
   }
@@ -218,6 +220,7 @@
   function defaultWidgetHeight(type) {
     if (type === WIDGET_TYPES.CHART_TIMELINE || type === WIDGET_TYPES.CHART_STATUS) return 340
     if (type === WIDGET_TYPES.CHART_ENDPOINTS || type === WIDGET_TYPES.CHART_IPS) return 380
+    if (type === WIDGET_TYPES.TABLE_HEAVY_URI) return 480
     if (type === WIDGET_TYPES.TABLE_SLOW) return 420
     return 220
   }
@@ -790,6 +793,7 @@
         [WIDGET_TYPES.CHART_ENDPOINTS]: 'Endpoints',
         [WIDGET_TYPES.CHART_IPS]: 'IPs lentos',
         [WIDGET_TYPES.TABLE_SLOW]: 'Req. lentas',
+        [WIDGET_TYPES.TABLE_HEAVY_URI]: 'TOP URIs (time-taken)',
       }
 
       const dashboardWidgetTitles = {
@@ -802,6 +806,7 @@
         [WIDGET_TYPES.CHART_ENDPOINTS]: 'Endpoints com maior tempo médio (cs-uri-stem)',
         [WIDGET_TYPES.CHART_IPS]: 'IPs com mais requisições lentas (limiar ms)',
         [WIDGET_TYPES.TABLE_SLOW]: 'Requisições mais lentas — tabela',
+        [WIDGET_TYPES.TABLE_HEAVY_URI]: 'TOP 200 cs-uri-stem — time-taken (min / máx / médio / qtd.)',
       }
 
       const chartCanvasEls = { timeline: null, endpoint: null, slowIp: null }
@@ -1237,6 +1242,50 @@
             stemGrouped: displayStemForGroupedChart(r),
           }))
       })
+
+      /** Ordenação do bloco TOP URIs: `max` | `min` | `avg` | `count` */
+      const heavyUriSortKey = ref('max')
+      /** Se true, agrega pelo mesmo stem exibido no gráfico de endpoints (grupos do modal). */
+      const heavyUriUseGrouping = ref(true)
+
+      const heavyUriTop200 = computed(() => {
+        const list = baseRows.value
+        if (!list.length) return []
+        const useGroup = heavyUriUseGrouping.value
+        const map = new Map()
+        for (const r of list) {
+          const stem = useGroup ? displayStemForGroupedChart(r) : r.stem
+          const key = `${r.method}\t${stem}`
+          let e = map.get(key)
+          if (!e) {
+            e = { method: r.method, stem, sum: 0, count: 0, min: r.timeTaken, max: r.timeTaken }
+            map.set(key, e)
+          } else {
+            e.min = Math.min(e.min, r.timeTaken)
+            e.max = Math.max(e.max, r.timeTaken)
+            e.sum += r.timeTaken
+            e.count += 1
+          }
+        }
+        const arr = [...map.values()].map((e) => ({
+          method: e.method,
+          stem: e.stem,
+          min: e.min,
+          max: e.max,
+          avg: Math.round(e.sum / e.count),
+          count: e.count,
+        }))
+        const sk = heavyUriSortKey.value
+        if (sk === 'min') arr.sort((a, b) => b.min - a.min)
+        else if (sk === 'avg') arr.sort((a, b) => b.avg - a.avg)
+        else if (sk === 'count') arr.sort((a, b) => b.count - a.count)
+        else arr.sort((a, b) => b.max - a.max)
+        return arr.slice(0, 200)
+      })
+
+      function setHeavyUriSort(key) {
+        if (key === 'max' || key === 'min' || key === 'avg' || key === 'count') heavyUriSortKey.value = key
+      }
 
       async function updateCharts() {
         await nextTick()
@@ -1689,6 +1738,10 @@
         slowIpChart,
         statusBreakdown,
         slowTable,
+        heavyUriSortKey,
+        heavyUriUseGrouping,
+        heavyUriTop200,
+        setHeavyUriSort,
         fmtBucket,
         loadFromText,
         consumeFile,

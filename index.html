@@ -249,6 +249,64 @@
                     <i class="fas fa-grip-vertical" aria-hidden="true"></i>
                   </span>
                   <span class="flex-grow-1 small fw-semibold">{{ dashboardWidgetTitles[item.type] }}</span>
+                  <template v-if="item.type === 'table-heavy-uri'">
+                    <div
+                      class="d-flex flex-wrap align-items-center gap-1 justify-content-end flex-shrink-0 ms-md-2"
+                      @click.stop
+                    >
+                      <div class="btn-group btn-group-sm" role="group" aria-label="Ordenar TOP 200">
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary"
+                          :class="{ active: heavyUriSortKey === 'max' }"
+                          title="Ordenar pelo time-taken máximo"
+                          @click="setHeavyUriSort('max')"
+                        >
+                          Máximo
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary"
+                          :class="{ active: heavyUriSortKey === 'min' }"
+                          title="Ordenar pelo time-taken mínimo"
+                          @click="setHeavyUriSort('min')"
+                        >
+                          Mínimo
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary"
+                          :class="{ active: heavyUriSortKey === 'avg' }"
+                          title="Ordenar pela média de time-taken"
+                          @click="setHeavyUriSort('avg')"
+                        >
+                          Médio
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary"
+                          :class="{ active: heavyUriSortKey === 'count' }"
+                          title="Ordenar pela quantidade de requisições"
+                          @click="setHeavyUriSort('count')"
+                        >
+                          Qtd.
+                        </button>
+                      </div>
+                      <div class="form-check form-switch mb-0 small text-secondary ms-1">
+                        <input
+                          :id="'heavy-uri-grp-' + item.uid"
+                          v-model="heavyUriUseGrouping"
+                          class="form-check-input"
+                          type="checkbox"
+                          role="switch"
+                          title="Quando ligado, agrega pelo mesmo caminho do gráfico de endpoints (prefixos de agrupamento do modal de filtro cs-uri-stem). Desligado: cada cs-uri-stem literal separado."
+                        />
+                        <label class="form-check-label text-nowrap" :for="'heavy-uri-grp-' + item.uid">
+                          Agrupar
+                        </label>
+                      </div>
+                    </div>
+                  </template>
                   <button
                     v-if="stats"
                     type="button"
@@ -355,6 +413,45 @@
                     </div>
                   </div>
                 </template>
+                <template v-else-if="item.type === 'table-heavy-uri'">
+                  <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
+                    <div
+                      class="table-responsive flex-grow-1 min-h-0-flex"
+                      :style="
+                        expandedWidgetUid === item.uid
+                          ? {}
+                          : { maxHeight: (item.heightPx || 480) + 'px' }
+                      "
+                    >
+                      <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
+                        <thead>
+                          <tr>
+                            <th class="text-end">#</th>
+                            <th>Método</th>
+                            <th>cs-uri-stem</th>
+                            <th class="text-end">Mín (ms)</th>
+                            <th class="text-end">Máx (ms)</th>
+                            <th class="text-end">Médio (ms)</th>
+                            <th class="text-end">Qtd.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(row, idx) in heavyUriTop200" :key="row.method + '\t' + row.stem + '\t' + idx">
+                            <td class="text-end small text-secondary">{{ idx + 1 }}</td>
+                            <td class="small text-nowrap">{{ row.method }}</td>
+                            <td class="small text-truncate" style="max-width: min(520px, 55vw)" :title="row.stem">
+                              <code>{{ row.stem }}</code>
+                            </td>
+                            <td class="text-end small">{{ row.min.toLocaleString('pt-BR') }}</td>
+                            <td class="text-end small">{{ row.max.toLocaleString('pt-BR') }}</td>
+                            <td class="text-end small">{{ row.avg.toLocaleString('pt-BR') }}</td>
+                            <td class="text-end small">{{ row.count.toLocaleString('pt-BR') }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </template>
                 <template v-else-if="item.type === 'table-slow'">
                   <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
                     <div
@@ -396,7 +493,9 @@
                 <div
                   v-if="
                     layoutEditMode &&
-                    (item.type.startsWith('chart-') || item.type === 'table-slow')
+                    (item.type.startsWith('chart-') ||
+                      item.type === 'table-slow' ||
+                      item.type === 'table-heavy-uri')
                   "
                   class="widget-resize-handle"
                   title="Arrastar para alterar altura"
