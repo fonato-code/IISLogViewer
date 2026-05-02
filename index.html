@@ -409,7 +409,7 @@
                 </template>
                 <template v-else-if="item.type === 'chart-status'">
                   <div
-                    class="card-body flex-grow-1 overflow-auto"
+                    class="card-body flex-grow-1 overflow-auto d-flex flex-column"
                     :style="
                       expandedWidgetUid === item.uid
                         ? {}
@@ -419,18 +419,58 @@
                           }
                     "
                   >
-                    <ul class="list-unstyled mb-0 small">
-                      <li
-                        v-for="st in statusBreakdown"
-                        :key="st[0]"
-                        class="d-flex justify-content-between py-1 border-bottom border-secondary"
-                      >
-                        <span>
-                          <code>{{ st[0] }}</code>
-                          <span class="text-secondary ms-1">— {{ httpStatusDescription(st[0]) }}</span>
-                        </span>
-                        <span>{{ st[1].toLocaleString('pt-BR') }}</span>
-                      </li>
+                    <div v-if="statusChartDrill == null" class="small text-secondary mb-2 flex-shrink-0">
+                      Clique num status para ver a distribuição por <code>sc-substatus</code> (o 200 não possui
+                      drill-down nesta visão).
+                    </div>
+                    <div v-else class="d-flex align-items-center flex-wrap gap-2 mb-2 flex-shrink-0">
+                      <button type="button" class="btn btn-sm btn-outline-secondary" @click="clearStatusChartDrill">
+                        ← Voltar aos status
+                      </button>
+                      <span class="small text-secondary">
+                        Substatus de <code>{{ statusChartDrill }}</code>
+                        <span class="ms-1">— {{ httpStatusDescription(statusChartDrill) }}</span>
+                      </span>
+                    </div>
+                    <ul class="list-unstyled mb-0 small flex-grow-1">
+                      <template v-if="statusChartDrill == null">
+                        <li
+                          v-for="st in statusBreakdown"
+                          :key="st[0]"
+                          class="d-flex justify-content-between py-1 border-bottom border-secondary"
+                          :class="{ 'iis-status-drillable': st[0] !== 200 }"
+                          role="button"
+                          :tabindex="st[0] === 200 ? -1 : 0"
+                          :aria-disabled="st[0] === 200"
+                          @click="onStatusChartRowClick(st[0])"
+                          @keydown.enter.prevent="onStatusChartRowClick(st[0])"
+                        >
+                          <span>
+                            <code>{{ st[0] }}</code>
+                            <span class="text-secondary ms-1">— {{ httpStatusDescription(st[0]) }}</span>
+                          </span>
+                          <span>{{ st[1].toLocaleString('pt-BR') }}</span>
+                        </li>
+                      </template>
+                      <template v-else>
+                        <li v-if="!statusSubBreakdown.length" class="py-2 text-secondary small">
+                          Nenhuma linha com este status no recorte atual (ou o log não inclui
+                          <code>sc-substatus</code> no <code>#Fields</code>).
+                        </li>
+                        <template v-else>
+                          <li
+                            v-for="sub in statusSubBreakdown"
+                            :key="'ss-' + statusChartDrill + '-' + sub[0]"
+                            class="d-flex justify-content-between py-1 border-bottom border-secondary"
+                          >
+                            <span>
+                              <code>{{ statusChartDrill }}.{{ sub[0] }}</code>
+                              <span class="text-secondary ms-1">— {{ iisWin32SubstatusLabel(statusChartDrill, sub[0]) }}</span>
+                            </span>
+                            <span>{{ sub[1].toLocaleString('pt-BR') }}</span>
+                          </li>
+                        </template>
+                      </template>
                     </ul>
                   </div>
                 </template>

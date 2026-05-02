@@ -8,6 +8,7 @@
     topClientIps,
     ipSlowTimeline,
     statusMix,
+    statusSubMix,
   } = window.IisLogCore
 
   const {
@@ -260,6 +261,110 @@
     if (c === 4) return 'Erro do cliente'
     if (c === 5) return 'Erro do servidor'
     return 'Desconhecido'
+  }
+
+  /**
+   * Significados comuns do par sc-status + sc-substatus (Win32 / IIS), em pt-BR.
+   * Referência: documentação Microsoft (códigos de estado e substatus do IIS).
+   * @type {Record<string, string>}
+   */
+  const IIS_WIN32_SUBSTATUS_PT = {
+    '400.0': 'Requisição inválida (genérico)',
+    '400.1': 'Cabeçalho de destino inválido',
+    '400.2': 'Cabeçalho Depth inválido',
+    '400.3': 'Cabeçalho Overwrite inválido',
+    '400.4': 'Cabeçalho Translate inválido',
+    '400.5': 'Comprimento do conteúdo inválido',
+    '400.6': 'Bloqueio WebDAV inválido',
+    '401.1': 'Logon falhou',
+    '401.2': 'Configuração de autenticação / logon falhou no servidor',
+    '401.3': 'Permissão NTFS negada no recurso',
+    '401.4': 'Autorização negada por filtro (URL Authorization)',
+    '401.5': 'ISAPI/CGI bloqueou ou negou a autorização',
+    '401.7': 'Negado por política de URL no servidor',
+    '403.1': 'Execução proibida',
+    '403.2': 'Leitura proibida',
+    '403.3': 'Gravação proibida',
+    '403.4': 'SSL obrigatório',
+    '403.5': 'SSL 128 bits obrigatório',
+    '403.6': 'Endereço IP rejeitado',
+    '403.7': 'Certificado de cliente obrigatório',
+    '403.8': 'Acesso ao site negado',
+    '403.9': 'Muitos usuários conectados',
+    '403.10': 'Configuração inválida',
+    '403.11': 'Alteração de senha exigida ou negada',
+    '403.12': 'Mapeador negou o acesso',
+    '403.13': 'Certificado de cliente revogado',
+    '403.14': 'Listagem de diretório negada',
+    '403.15': 'Licenças de acesso ao cliente excedidas',
+    '403.16': 'Certificado de cliente inválido ou não confiável',
+    '403.17': 'Certificado de cliente expirado ou ainda inválido',
+    '403.18': 'Não é possível executar a partir deste pool de aplicações',
+    '403.19': 'Não é possível executar CGIs neste pool de aplicações',
+    '403.20': 'Falha no logon Passport (legado)',
+    '404.0': 'Não encontrado (genérico)',
+    '404.1': 'Site não encontrado',
+    '404.2': 'Restrição ISAPI / bloqueio',
+    '404.3': 'Restrição por tipo MIME (mapa de MIME)',
+    '404.4': 'Nenhum manipulador (handler) configurado',
+    '404.5': 'Sequência de URL negada por filtro',
+    '404.6': 'Verbo HTTP negado',
+    '404.7': 'Extensão de arquivo negada',
+    '404.8': 'Namespace oculto / escopo negado',
+    '404.9': 'Atributo de arquivo oculto',
+    '404.10': 'Cabeçalho da requisição muito longo',
+    '404.11': 'Escape duplo na URL (possível ataque)',
+    '404.12': 'Query string muito longa',
+    '404.13': 'URL muito longa',
+    '404.14': 'Segmento da URL com escape duplo',
+    '404.15': 'Negado por regra de filtragem (Request Filtering)',
+    '404.16': 'WebDAV bloqueou a solicitação',
+    '404.17': 'Resultado de rastreio (trace) indisponível',
+    '404.18': 'Query negada por regras',
+    '404.19': 'Credenciais negadas pelo núcleo (denied by filtering rules)',
+    '405.0': 'Método não permitido (genérico)',
+    '406.0': 'Não aceitável (genérico)',
+    '412.0': 'Pré-condição falhou',
+    '413.1': 'Conteúdo da requisição muito grande',
+    '414.0': 'URI muito longa',
+    '415.0': 'Tipo de mídia não suportado',
+    '416.0': 'Intervalo solicitado inválido',
+    '431.0': 'Campos de cabeçalho muito grandes',
+    '500.0': 'Erro de módulo / ISAPI ou ASP.NET não tratado',
+    '500.11': 'Aplicação em encerramento no servidor web',
+    '500.12': 'Aplicação a reiniciar no servidor web',
+    '500.13': 'Servidor web muito ocupado',
+    '500.14': 'Inválido — Global.asa ou regra de autorização',
+    '500.15': 'Solicitação direta para Global.asa negada',
+    '500.16': 'Credenciais UNC incorretas (ASP.NET)',
+    '500.17': 'Falha na autorização da URL (ASP.NET)',
+    '500.18': 'Falha ao abrir configuração (metadados / permissão)',
+    '500.19': 'Dados de configuração inválidos ou bloqueados',
+    '500.21': 'Módulo reconhecido mas não pode ser executado',
+    '500.22': 'Módulo ASP.NET detectou configuração inválida',
+    '500.23': 'ASP.NET não pode ser instalado no pipeline clássico',
+    '500.24': 'Não é possível misturar modo de pipeline Integrated e Classic',
+    '500.50': 'Erro durante notificação RQ_BEGIN_REQUEST',
+    '500.100': 'Erro interno ASP clássico',
+    '501.0': 'Não implementado (genérico)',
+    '502.1': 'Timeout do gateway (CGI / arranque da aplicação)',
+    '502.2': 'Limite de tamanho ou Bad Gateway',
+    '502.3': 'Bad Gateway — erro de ativação do Windows',
+    '502.4': 'Código de erro do servidor de origem não processado',
+    '502.5': 'Falha ao aceitar conexão WebSocket',
+    '503.0': 'Pool de aplicações indisponível ou em reciclagem',
+    '503.2': 'Limite de requisições simultâneas excedido',
+    '503.3': 'Fila ASP.NET cheia',
+    '503.4': 'Pausa para coleta de lixo (.NET)',
+  }
+
+  function iisWin32SubstatusLabel(httpStatus, subCode) {
+    const s = httpStatus | 0
+    const u = subCode | 0
+    const key = `${s}.${u}`
+    if (IIS_WIN32_SUBSTATUS_PT[key]) return IIS_WIN32_SUBSTATUS_PT[key]
+    if (u === 0) return 'Substatus 0 — não especificado ou coluna sc-substatus ausente no #Fields'
+    return `Substatus IIS ${s}.${u} — consulte a documentação Microsoft (Win32 / Reason)`
   }
 
   if (typeof Chart !== 'undefined') {
@@ -1812,6 +1917,25 @@
         return statusMix(list).slice(0, 8)
       })
 
+      /** `null` = lista principal por sc-status; número = detalhe por sc-substatus daquele status. */
+      const statusChartDrill = ref(null)
+
+      const statusSubBreakdown = computed(() => {
+        const main = statusChartDrill.value
+        if (main == null) return []
+        return statusSubMix(baseRows.value, main)
+      })
+
+      function onStatusChartRowClick(code) {
+        const n = Number(code)
+        if (!Number.isFinite(n) || n === 200) return
+        statusChartDrill.value = n
+      }
+
+      function clearStatusChartDrill() {
+        statusChartDrill.value = null
+      }
+
       const slowTable = computed(() => {
         const list = baseRows.value
         const th = slowThresholdMs.value
@@ -2711,6 +2835,7 @@
         rows.value = []
         meta.value = null
         errorMsg.value = ''
+        statusChartDrill.value = null
         ipFilter.value = ''
         applicationFilter.value = ''
         clearStemFilters()
@@ -2914,6 +3039,10 @@
         pieIpChart,
         pieAppChart,
         statusBreakdown,
+        statusChartDrill,
+        statusSubBreakdown,
+        onStatusChartRowClick,
+        clearStatusChartDrill,
         slowTable,
         slowTablePag,
         slowTableFiltered,
@@ -2973,6 +3102,7 @@
         onEndpointStemIncludedChange,
         fmtPercent,
         httpStatusDescription,
+        iisWin32SubstatusLabel,
         fmtBucket,
         loadFromText,
         consumeFile,

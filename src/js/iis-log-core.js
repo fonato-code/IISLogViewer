@@ -69,6 +69,12 @@
     const timestamp = Date.parse(`${date}T${time.trim()}Z`)
     const timeTaken = parseInt(row['time-taken'], 10)
     const scStatus = parseInt(row['sc-status'], 10)
+    const rawSub = row['sc-substatus']
+    const subParsed =
+      rawSub === undefined || rawSub === '' || rawSub == null
+        ? 0
+        : parseInt(String(rawSub).trim(), 10)
+    const substatus = Number.isFinite(subParsed) ? subParsed : 0
     if (!Number.isFinite(timeTaken) || !Number.isFinite(timestamp)) return null
 
     return {
@@ -80,6 +86,7 @@
       query: row['cs-uri-query'] || '',
       clientIp: row['c-ip'] || '',
       status: scStatus,
+      substatus,
       timeTaken,
       bytesSent: parseInt(row['sc-bytes'], 10) || 0,
       bytesIn: parseInt(row['cs-bytes'], 10) || 0,
@@ -253,6 +260,18 @@
     return [...map.entries()].sort((a, b) => b[1] - a[1])
   }
 
+  /** Contagem por `sc-substatus` para linhas com `sc-status` = mainStatus. */
+  function statusSubMix(rows, mainStatus) {
+    const target = mainStatus | 0
+    const map = new Map()
+    for (const r of rows) {
+      if ((r.status | 0) !== target) continue
+      const sub = Number.isFinite(Number(r.substatus)) ? Number(r.substatus) : 0
+      map.set(sub, (map.get(sub) || 0) + 1)
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])
+  }
+
   window.IisLogCore = {
     estimateLineCount,
     parseIisLogText,
@@ -262,5 +281,6 @@
     topClientIps,
     ipSlowTimeline,
     statusMix,
+    statusSubMix,
   }
 })()

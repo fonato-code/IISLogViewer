@@ -438,3 +438,16 @@ body.iis-layout-arranging .dashboard-dd-strip-hint {
   background-color: var(--bs-body-color);
   border-color: var(--bs-body-color);
 }
+
+.iis-status-drillable {
+  cursor: pointer;
+  border-radius: 0.2rem;
+  margin-left: -0.25rem;
+  margin-right: -0.25rem;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+
+.iis-status-drillable:hover {
+  background: rgba(var(--bs-primary-rgb), 0.12);
+}
