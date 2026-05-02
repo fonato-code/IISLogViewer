@@ -325,15 +325,6 @@
     return s
   }
 
-  /** Path completo colado → mesma convenção do modal (sem 1º segmento / pasta da app). */
-  function userInputToEndpointRelPrefix(raw) {
-    const n = normalizeEndpointGroupPrefix(raw)
-    if (!n || n === '/') return n
-    const parts = n.split('/').filter(Boolean)
-    if (parts.length <= 1) return n
-    return `/${parts.slice(1).join('/')}`
-  }
-
   createApp({
     setup() {
       const rows = shallowRef([])
@@ -390,7 +381,7 @@
             const out = []
             for (const x of arr) {
               if (!x || !x.prefix) continue
-              const prefix = normalizeEndpointGroupPrefix(userInputToEndpointRelPrefix(String(x.prefix)))
+              const prefix = normalizeEndpointGroupPrefix(String(x.prefix))
               if (!prefix) continue
               out.push({
                 id: typeof x.id === 'string' && x.id ? x.id : `g-${Math.random().toString(36).slice(2, 10)}`,
@@ -458,7 +449,7 @@
       }
 
       function saveNewEndpointGroup() {
-        const prefix = normalizeEndpointGroupPrefix(userInputToEndpointRelPrefix(endpointGroupNewInput.value))
+        const prefix = normalizeEndpointGroupPrefix(endpointGroupNewInput.value)
         if (!prefix) {
           cancelAddEndpointGroup()
           return
@@ -497,7 +488,7 @@
       function saveEditEndpointGroup() {
         const id = editingEndpointGroupId.value
         if (!id) return
-        const prefix = normalizeEndpointGroupPrefix(userInputToEndpointRelPrefix(editingEndpointGroupPrefix.value))
+        const prefix = normalizeEndpointGroupPrefix(editingEndpointGroupPrefix.value)
         if (!prefix) {
           cancelEditEndpointGroup()
           return

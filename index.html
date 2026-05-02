@@ -621,11 +621,12 @@
             <section class="mb-4">
               <h6 class="text-secondary mb-2">Agrupamentos de endpoint (prefixo)</h6>
               <p class="small text-secondary mb-2">
-                Cadastre um prefixo no <strong>mesmo formato da coluna abaixo</strong> (caminho sem o primeiro segmento,
-                ex. <code>/api/Ocorrencia/Veiculos/Modelos</code>). Todas as URLs que continuarem esse path
-                (<code>…/Modelos/FOCUS</code>, <code>…/Modelos/FORD</code>, etc.) contam como <strong>um único</strong>
-                endpoint no filtro, no gráfico de lentidão por endpoint e na tabela de lentas. Se dois prefixos
-                casarem, vale o <strong>mais longo</strong>.
+                Cadastre um prefixo exatamente como o <strong>caminho relativo usado na coluna da tabela abaixo</strong>
+                (já sem a pasta da aplicação no IIS — o mesmo critério do filtro interno). Ex.:
+                <code>/api/Ocorrencia/Veiculos/Modelos</code>. O texto é salvo <strong>só com barra inicial e sem barra
+                final</strong>; não removemos mais nenhum segmento do que você digitar. URLs que continuarem esse path
+                contam como <strong>um único</strong> endpoint no filtro, nos gráficos e na tabela de lentas. Se dois
+                prefixos casarem, vale o <strong>mais longo</strong>.
               </p>
               <div class="d-flex flex-wrap gap-2 mb-2">
                 <button
@@ -639,7 +640,7 @@
                 </button>
               </div>
               <div v-if="endpointGroupAdding" class="border border-secondary rounded p-2 mb-3">
-                <label class="form-label small mb-1" for="endpointGroupNewInput">Prefixo (relativo, sem pasta da app)</label>
+                <label class="form-label small mb-1" for="endpointGroupNewInput">Prefixo (igual à coluna da tabela)</label>
                 <div class="d-flex flex-wrap gap-2 align-items-center">
                   <input
                     id="endpointGroupNewInput"
@@ -647,7 +648,7 @@
                     type="text"
                     class="form-control form-control-sm flex-grow-1"
                     style="min-width: 200px"
-                    placeholder="Ex.: /api/Ocorrencia/Veiculos/Modelos ou colar URL completa"
+                    placeholder="Ex.: /api/Ocorrencia/Veiculos/Modelos"
                     @keydown.enter.prevent="saveNewEndpointGroup"
                   />
                   <button type="button" class="btn btn-sm btn-primary" @click="saveNewEndpointGroup">Salvar</button>
@@ -704,9 +705,10 @@
             <section>
               <h6 class="text-secondary mb-2">Endpoints e páginas</h6>
               <p class="small text-secondary mb-2">
-                O caminho é o <code>cs-uri-stem</code> <strong>sem o primeiro segmento</strong> (nome da aplicação).
-                Desmarcar um caminho <strong>exclui em todas as aplicações</strong>. Por padrão, endpoints SignalR de
-                infraestrutura (negotiate, connect, etc.) começam desmarcados.
+                A coluna mostra a <strong>chave relativa</strong> usada no filtro (o IIS costuma ter a pasta da
+                aplicação no 1º segmento do <code>cs-uri-stem</code>; ela já é ignorada na chave). Desmarcar um caminho
+                <strong>exclui em todas as aplicações</strong>. Por padrão, endpoints SignalR de infraestrutura
+                (negotiate, connect, etc.) começam desmarcados.
               </p>
               <div class="row g-2 mb-3 align-items-end">
                 <div class="col-md-6">
@@ -751,7 +753,7 @@
                         @click="sortEndpointModalColumn('relStem')"
                         @keydown.enter.prevent="sortEndpointModalColumn('relStem')"
                       >
-                        <code>cs-uri-stem</code> (sem app)
+                        Chave relativa
                         <i class="ms-1 small" :class="faSortClass(endpointModalSort, 'relStem')" aria-hidden="true"></i>
                       </th>
                       <th
