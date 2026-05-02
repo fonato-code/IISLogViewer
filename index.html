@@ -98,20 +98,45 @@
         </div>
 
         <template v-if="stats">
+          <div class="position-relative iis-stats-shell">
+            <div
+              v-if="filterRecomputing"
+              class="iis-recompute-overlay"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <div class="iis-recompute-panel card border-secondary bg-body shadow">
+                <div class="card-body py-3 px-4 d-flex align-items-center gap-3">
+                  <div class="spinner-border text-primary" role="presentation" aria-hidden="true"></div>
+                  <div>
+                    <div class="fw-semibold small">Recalculando análise…</div>
+                    <div class="text-secondary small mb-0">Aguarde — filtros em arquivos grandes podem levar alguns segundos.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           <div class="row g-3 mb-3 align-items-end">
             <div class="col-lg-3 col-md-6">
               <label class="form-label small mb-1">Lentidão ≥ (ms) — gráfico por IP e tabela</label>
               <input
-                v-model.number="slowThresholdMs"
+                :value="slowThresholdMs"
                 type="number"
                 min="0"
                 step="50"
                 class="form-control form-control-sm"
+                :disabled="filterRecomputing"
+                @change="onSlowThresholdChange($event)"
               />
             </div>
             <div class="col-lg-4 col-md-6">
               <label class="form-label small mb-1">Aplicação (1º segmento do <code>cs-uri-stem</code>)</label>
-              <select v-model="applicationFilter" class="form-select form-select-sm">
+              <select
+                :value="applicationFilter"
+                class="form-select form-select-sm"
+                :disabled="filterRecomputing"
+                @change="onApplicationFilterChange($event.target.value)"
+              >
                 <option value="">Todas as aplicações</option>
                 <option v-for="opt in applicationOptions" :key="opt.name" :value="opt.name">
                   {{ opt.name }} — {{ opt.count.toLocaleString('pt-BR') }} req.
@@ -120,7 +145,12 @@
             </div>
             <div class="col-lg-5 col-md-12">
               <label class="form-label small mb-1">Filtrar por IP cliente</label>
-              <select v-model="ipFilter" class="form-select form-select-sm">
+              <select
+                :value="ipFilter"
+                class="form-select form-select-sm"
+                :disabled="filterRecomputing"
+                @change="onIpFilterChange($event.target.value)"
+              >
                 <option value="">Todos os IPs</option>
                 <option v-for="opt in clientIpOptions" :key="opt.ip" :value="opt.ip">
                   {{ opt.ip }} — {{ opt.count.toLocaleString('pt-BR') }} req.
@@ -260,6 +290,7 @@
                           class="btn btn-outline-secondary"
                           :class="{ active: heavyUriSortKey === 'max' }"
                           title="Ordenar pelo time-taken máximo"
+                          :disabled="heavyUriRecomputing"
                           @click="setHeavyUriSort('max')"
                         >
                           Máximo
@@ -269,6 +300,7 @@
                           class="btn btn-outline-secondary"
                           :class="{ active: heavyUriSortKey === 'min' }"
                           title="Ordenar pelo time-taken mínimo"
+                          :disabled="heavyUriRecomputing"
                           @click="setHeavyUriSort('min')"
                         >
                           Mínimo
@@ -278,6 +310,7 @@
                           class="btn btn-outline-secondary"
                           :class="{ active: heavyUriSortKey === 'avg' }"
                           title="Ordenar pela média de time-taken"
+                          :disabled="heavyUriRecomputing"
                           @click="setHeavyUriSort('avg')"
                         >
                           Médio
@@ -287,6 +320,7 @@
                           class="btn btn-outline-secondary"
                           :class="{ active: heavyUriSortKey === 'count' }"
                           title="Ordenar pela quantidade de requisições"
+                          :disabled="heavyUriRecomputing"
                           @click="setHeavyUriSort('count')"
                         >
                           Qtd.
@@ -295,11 +329,13 @@
                       <div class="form-check form-switch mb-0 small text-secondary ms-1">
                         <input
                           :id="'heavy-uri-grp-' + item.uid"
-                          v-model="heavyUriUseGrouping"
+                          :checked="heavyUriUseGrouping"
                           class="form-check-input"
                           type="checkbox"
                           role="switch"
+                          :disabled="heavyUriRecomputing"
                           title="Quando ligado, agrega pelo mesmo caminho do gráfico de endpoints (prefixos de agrupamento do modal de filtro cs-uri-stem). Desligado: cada cs-uri-stem literal separado."
+                          @change="setHeavyUriUseGrouping($event.target.checked)"
                         />
                         <label class="form-check-label text-nowrap" :for="'heavy-uri-grp-' + item.uid">
                           Agrupar
@@ -414,7 +450,19 @@
                   </div>
                 </template>
                 <template v-else-if="item.type === 'table-heavy-uri'">
-                  <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
+                  <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex position-relative">
+                    <div
+                      v-if="heavyUriRecomputing"
+                      class="iis-heavy-uri-overlay"
+                      role="status"
+                      aria-live="polite"
+                      aria-busy="true"
+                    >
+                      <div class="d-flex align-items-center gap-2 text-secondary small">
+                        <div class="spinner-border spinner-border-sm text-primary" role="presentation"></div>
+                        <span>Atualizando lista…</span>
+                      </div>
+                    </div>
                     <div
                       class="table-responsive flex-grow-1 min-h-0-flex"
                       :style="
@@ -523,6 +571,7 @@
               <strong>Centro do cartão</strong>: <strong>trocar</strong> posição e largura com este bloco.
             </span>
           </div>
+          </div>
         </template>
 
         <p v-else-if="!loading" class="text-secondary small">
@@ -542,7 +591,19 @@
         aria-labelledby="stemModalTitle"
         @click.self="closeStemModal"
       >
-        <div class="stem-modal-panel card border-secondary bg-body-tertiary shadow-lg" @click.stop>
+        <div class="stem-modal-panel card border-secondary bg-body-tertiary shadow-lg position-relative" @click.stop>
+          <div
+            v-if="filterRecomputing"
+            class="iis-stem-modal-overlay"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div class="d-flex align-items-center gap-2 text-secondary small">
+              <div class="spinner-border spinner-border-sm text-primary" role="presentation"></div>
+              <span>Recalculando filtros…</span>
+            </div>
+          </div>
           <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
             <span id="stemModalTitle" class="fw-semibold">Filtro por <code>cs-uri-stem</code></span>
             <button type="button" class="btn-close btn-close-white" aria-label="Fechar" @click="closeStemModal"></button>
@@ -555,10 +616,20 @@
                 <strong>desmarcados</strong> (excluídos). Marque um formato para <strong>incluir</strong> na análise.
               </p>
               <div class="d-flex gap-2 mb-2 flex-wrap">
-                <button type="button" class="btn btn-sm btn-outline-light" @click="toggleAllStaticExts(true)">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-light"
+                  :disabled="filterRecomputing"
+                  @click="toggleAllStaticExts(true)"
+                >
                   Marcar todos
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-light" @click="toggleAllStaticExts(false)">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-light"
+                  :disabled="filterRecomputing"
+                  @click="toggleAllStaticExts(false)"
+                >
                   Desmarcar todos
                 </button>
               </div>
@@ -601,7 +672,8 @@
                             :checked="staticExtIncluded[row.ext] !== false"
                             type="checkbox"
                             class="form-check-input"
-                            @change="staticExtIncluded[row.ext] = $event.target.checked"
+                            :disabled="filterRecomputing"
+                            @change="onStaticExtIncludedChange(row.ext, $event.target.checked)"
                           />
                         </td>
                         <td><code>.{{ row.ext }}</code></td>
@@ -713,7 +785,12 @@
               <div class="row g-2 mb-3 align-items-end">
                 <div class="col-md-6">
                   <label class="form-label small mb-0">Mostrar stems da aplicação</label>
-                  <select v-model="modalEndpointApp" class="form-select form-select-sm">
+                  <select
+                    :value="modalEndpointApp"
+                    class="form-select form-select-sm"
+                    :disabled="filterRecomputing"
+                    @change="onModalEndpointAppChange($event.target.value)"
+                  >
                     <option :value="modalAppAll">Todas as aplicações</option>
                     <option v-for="opt in applicationOptions" :key="opt.name" :value="opt.name">
                       {{ opt.name }} — {{ opt.count.toLocaleString('pt-BR') }} req.
@@ -724,7 +801,7 @@
                   <button
                     type="button"
                     class="btn btn-sm btn-outline-light"
-                    :disabled="!modalEndpointList.length"
+                    :disabled="!modalEndpointList.length || filterRecomputing"
                     @click="toggleAllModalEndpoints(true)"
                   >
                     Marcar listados
@@ -732,7 +809,7 @@
                   <button
                     type="button"
                     class="btn btn-sm btn-outline-light"
-                    :disabled="!modalEndpointList.length"
+                    :disabled="!modalEndpointList.length || filterRecomputing"
                     @click="toggleAllModalEndpoints(false)"
                   >
                     Desmarcar listados
@@ -783,7 +860,8 @@
                             :checked="endpointStemIncluded[row.stateKey] !== false"
                             type="checkbox"
                             class="form-check-input"
-                            @change="endpointStemIncluded[row.stateKey] = $event.target.checked"
+                            :disabled="filterRecomputing"
+                            @change="onEndpointStemIncludedChange(row.stateKey, $event.target.checked)"
                           />
                         </td>
                         <td class="small text-break"><code>{{ row.relStem }}</code></td>
@@ -796,7 +874,12 @@
             </section>
           </div>
           <div class="card-footer border-secondary d-flex justify-content-between flex-wrap gap-2">
-            <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetStemFiltersToDefault">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              :disabled="filterRecomputing"
+              @click="resetStemFiltersToDefault"
+            >
               Restaurar padrão (estáticos + SignalR excluídos)
             </button>
             <button type="button" class="btn btn-sm btn-primary" @click="closeStemModal">Fechar</button>

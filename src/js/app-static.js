@@ -369,6 +369,26 @@
       const stemModalOpen = ref(false)
       /** Aplicação no modal: MODAL_APP_ALL = todas, ou nome de applicationOptions / APP_NONE */
       const modalEndpointApp = ref(MODAL_APP_ALL)
+      /** Overlay “recalculando” após mudança de filtros (corpo da análise). */
+      const filterRecomputing = ref(false)
+      /** Overlay no widget TOP URIs ao mudar ordenação / agrupamento. */
+      const heavyUriRecomputing = ref(false)
+
+      function beginDeferredHeavyWork(run, which = 'filter') {
+        const flag = which === 'heavyUri' ? heavyUriRecomputing : filterRecomputing
+        flag.value = true
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            try {
+              run()
+            } finally {
+              nextTick(() => {
+                flag.value = false
+              })
+            }
+          }, 0)
+        })
+      }
       const staticExtIncluded = reactive({})
       const endpointStemIncluded = reactive({})
 
@@ -425,12 +445,15 @@
         return `/${appSeg}${canon}`
       }
 
-      function persistEndpointGroups() {
-        try {
-          localStorage.setItem(ENDPOINT_GROUPS_STORAGE_KEY, JSON.stringify(endpointGroups.value))
-        } catch (_) {}
-        mergeStemFilterDefaults()
-        restoreSessionFiltersAfterMerge()
+      function commitEndpointGroupsAndPersist(nextList) {
+        beginDeferredHeavyWork(() => {
+          endpointGroups.value = nextList
+          try {
+            localStorage.setItem(ENDPOINT_GROUPS_STORAGE_KEY, JSON.stringify(endpointGroups.value))
+          } catch (_) {}
+          mergeStemFilterDefaults()
+          restoreSessionFiltersAfterMerge()
+        }, 'filter')
       }
 
       const endpointGroupNewInput = ref('')
@@ -458,21 +481,19 @@
           cancelAddEndpointGroup()
           return
         }
-        endpointGroups.value = [
+        commitEndpointGroupsAndPersist([
           ...endpointGroups.value,
           { id: `g-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`, prefix },
-        ]
-        persistEndpointGroups()
+        ])
         cancelAddEndpointGroup()
       }
 
       function removeEndpointGroup(id) {
-        endpointGroups.value = endpointGroups.value.filter((g) => g.id !== id)
         if (editingEndpointGroupId.value === id) {
           editingEndpointGroupId.value = null
           editingEndpointGroupPrefix.value = ''
         }
-        persistEndpointGroups()
+        commitEndpointGroupsAndPersist(endpointGroups.value.filter((g) => g.id !== id))
       }
 
       function startEditEndpointGroup(g) {
@@ -498,10 +519,9 @@
           cancelEditEndpointGroup()
           return
         }
-        endpointGroups.value = endpointGroups.value.map((g) =>
-          g.id === id ? { ...g, prefix } : g,
+        commitEndpointGroupsAndPersist(
+          endpointGroups.value.map((g) => (g.id === id ? { ...g, prefix } : g)),
         )
-        persistEndpointGroups()
         cancelEditEndpointGroup()
       }
 
@@ -1275,7 +1295,64 @@
       })
 
       function setHeavyUriSort(key) {
-        if (key === 'max' || key === 'min' || key === 'avg' || key === 'count') heavyUriSortKey.value = key
+        if (key !== 'max' && key !== 'min' && key !== 'avg' && key !== 'count') return
+        if (heavyUriSortKey.value === key) return
+        beginDeferredHeavyWork(() => {
+          heavyUriSortKey.value = key
+        }, 'heavyUri')
+      }
+
+      function setHeavyUriUseGrouping(val) {
+        const v = !!val
+        if (heavyUriUseGrouping.value === v) return
+        beginDeferredHeavyWork(() => {
+          heavyUriUseGrouping.value = v
+        }, 'heavyUri')
+      }
+
+      function onIpFilterChange(val) {
+        const s = val == null ? '' : String(val)
+        if (s === ipFilter.value) return
+        beginDeferredHeavyWork(() => {
+          ipFilter.value = s
+        }, 'filter')
+      }
+
+      function onApplicationFilterChange(val) {
+        const s = val == null ? '' : String(val)
+        if (s === applicationFilter.value) return
+        beginDeferredHeavyWork(() => {
+          applicationFilter.value = s
+        }, 'filter')
+      }
+
+      function onSlowThresholdChange(ev) {
+        const raw = Number(ev?.target?.value)
+        const v = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : slowThresholdMs.value
+        if (v === slowThresholdMs.value) return
+        beginDeferredHeavyWork(() => {
+          slowThresholdMs.value = v
+        }, 'filter')
+      }
+
+      function onModalEndpointAppChange(val) {
+        const s = val == null ? '' : String(val)
+        if (s === modalEndpointApp.value) return
+        beginDeferredHeavyWork(() => {
+          modalEndpointApp.value = s
+        }, 'filter')
+      }
+
+      function onStaticExtIncludedChange(ext, checked) {
+        beginDeferredHeavyWork(() => {
+          staticExtIncluded[ext] = checked
+        }, 'filter')
+      }
+
+      function onEndpointStemIncludedChange(stateKey, checked) {
+        beginDeferredHeavyWork(() => {
+          endpointStemIncluded[stateKey] = checked
+        }, 'filter')
       }
 
       async function updateCharts() {
@@ -1609,6 +1686,8 @@
         try {
           sessionStorage.removeItem(SESSION_FILTERS_STORAGE_KEY)
         } catch (_) {}
+        filterRecomputing.value = false
+        heavyUriRecomputing.value = false
         destroyCharts()
       }
 
@@ -1623,25 +1702,31 @@
       }
 
       function toggleAllStaticExts(on) {
-        for (const row of sortedStaticModalRows.value) {
-          staticExtIncluded[row.ext] = on
-        }
+        beginDeferredHeavyWork(() => {
+          for (const row of sortedStaticModalRows.value) {
+            staticExtIncluded[row.ext] = on
+          }
+        }, 'filter')
       }
 
       function toggleAllModalEndpoints(on) {
-        for (const row of sortedEndpointModalRows.value) {
-          endpointStemIncluded[row.stateKey] = on
-        }
+        beginDeferredHeavyWork(() => {
+          for (const row of sortedEndpointModalRows.value) {
+            endpointStemIncluded[row.stateKey] = on
+          }
+        }, 'filter')
       }
 
       function resetStemFiltersToDefault() {
-        mergeStemFilterDefaults()
-        for (const row of discoveredStaticExtensions.value) {
-          staticExtIncluded[row.ext] = false
-        }
-        Object.keys(endpointStemIncluded).forEach((k) => {
-          endpointStemIncluded[k] = !isDefaultExcludedSignalrRel(k)
-        })
+        beginDeferredHeavyWork(() => {
+          mergeStemFilterDefaults()
+          for (const row of discoveredStaticExtensions.value) {
+            staticExtIncluded[row.ext] = false
+          }
+          Object.keys(endpointStemIncluded).forEach((k) => {
+            endpointStemIncluded[k] = !isDefaultExcludedSignalrRel(k)
+          })
+        }, 'filter')
       }
 
       return {
@@ -1733,6 +1818,15 @@
         heavyUriUseGrouping,
         heavyUriTop200,
         setHeavyUriSort,
+        setHeavyUriUseGrouping,
+        filterRecomputing,
+        heavyUriRecomputing,
+        onIpFilterChange,
+        onApplicationFilterChange,
+        onSlowThresholdChange,
+        onModalEndpointAppChange,
+        onStaticExtIncludedChange,
+        onEndpointStemIncludedChange,
         fmtBucket,
         loadFromText,
         consumeFile,
