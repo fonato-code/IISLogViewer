@@ -17,6 +17,16 @@
             IIS Log Viewer
           </span>
           <div class="d-flex align-items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm"
+              :disabled="loading"
+              title="Amostragem, limite de linhas na memória"
+              @click="openParseSettingsModal"
+            >
+              <i class="fas fa-cog me-1" aria-hidden="true"></i>
+              Leitura do log
+            </button>
             <button type="button" class="btn btn-primary btn-sm" :disabled="loading" @click="onPickClick">
               <i class="fas fa-file-archive me-1" aria-hidden="true"></i>
               Importar ZIP / LOG
@@ -440,8 +450,8 @@
             <section class="mb-4">
               <h6 class="text-secondary mb-2">Arquivos estáticos (somente por extensão)</h6>
               <p class="small text-secondary mb-2">
-                HTML, ASPX e extensões de página não entram nesta lista. Desmarque um formato para
-                <strong>excluir</strong> todas as requisições daquele tipo da análise.
+                HTML, ASPX e extensões de página não entram nesta lista. Por padrão os formatos começam
+                <strong>desmarcados</strong> (excluídos). Marque um formato para <strong>incluir</strong> na análise.
               </p>
               <div class="d-flex gap-2 mb-2 flex-wrap">
                 <button type="button" class="btn btn-sm btn-outline-light" @click="toggleAllStaticExts(true)">
@@ -511,8 +521,8 @@
               <h6 class="text-secondary mb-2">Endpoints e páginas</h6>
               <p class="small text-secondary mb-2">
                 O caminho é o <code>cs-uri-stem</code> <strong>sem o primeiro segmento</strong> (nome da aplicação).
-                Desmarcar um caminho <strong>exclui em todas as aplicações</strong>. O filtro abaixo só restringe a lista
-                para achar stems de uma aplicação.
+                Desmarcar um caminho <strong>exclui em todas as aplicações</strong>. Por padrão, endpoints SignalR de
+                infraestrutura (negotiate, connect, etc.) começam desmarcados.
               </p>
               <div class="row g-2 mb-3 align-items-end">
                 <div class="col-md-6">
@@ -601,9 +611,94 @@
           </div>
           <div class="card-footer border-secondary d-flex justify-content-between flex-wrap gap-2">
             <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetStemFiltersToDefault">
-              Restaurar padrão (tudo incluído)
+              Restaurar padrão (estáticos + SignalR excluídos)
             </button>
             <button type="button" class="btn btn-sm btn-primary" @click="closeStemModal">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="parseSettingsModalOpen"
+        class="stem-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="parseSettingsModalTitle"
+        @click.self="closeParseSettingsModal"
+      >
+        <div class="stem-modal-panel card border-secondary bg-body-tertiary shadow-lg" @click.stop>
+          <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+            <span id="parseSettingsModalTitle" class="fw-semibold">Leitura do arquivo de log</span>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              aria-label="Fechar"
+              @click="closeParseSettingsModal"
+            ></button>
+          </div>
+          <div class="card-body">
+            <p class="small text-secondary mb-3">
+              Estas opções valem na <strong>próxima importação</strong>. Valores são salvos neste navegador.
+            </p>
+            <div class="form-check form-switch mb-3">
+              <input
+                id="parseSamplingSwitch"
+                v-model="parseSettingsDraft.samplingEnabled"
+                class="form-check-input"
+                type="checkbox"
+                role="switch"
+              />
+              <label class="form-check-label" for="parseSamplingSwitch">
+                <strong>Amostragem automática</strong> em arquivos grandes
+              </label>
+              <div class="small text-secondary mt-1 ms-1">
+                Desligado = tenta usar <strong>cada linha</strong> do log (pode travar ou esgotar memória em arquivos
+                enormes).
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small mb-1" for="parseTargetLinesInput">
+                Limiar de linhas (estimativa) para amostragem
+              </label>
+              <input
+                id="parseTargetLinesInput"
+                v-model.number="parseSettingsDraft.targetLines"
+                type="number"
+                min="10000"
+                max="10000000"
+                step="10000"
+                class="form-control form-control-sm"
+                :disabled="!parseSettingsDraft.samplingEnabled"
+              />
+              <div class="small text-secondary mt-1">
+                Se a estimativa de linhas for <strong>maior</strong> que este valor, o parser usa amostragem 1/N para
+                aproximar ~este número de linhas lidas no arquivo (como antes: ~320 mil).
+              </div>
+            </div>
+            <div class="mb-0">
+              <label class="form-label small mb-1" for="parseMaxRowsInput">Máximo de linhas guardadas na memória</label>
+              <input
+                id="parseMaxRowsInput"
+                v-model.number="parseSettingsDraft.maxRows"
+                type="number"
+                min="50000"
+                max="5000000"
+                step="10000"
+                class="form-control form-control-sm"
+              />
+              <div class="small text-secondary mt-1">
+                Limite de registros após o parse (padrão 350 mil). Ao atingir, a leitura do arquivo para mesmo que
+                existam linhas restantes.
+              </div>
+            </div>
+          </div>
+          <div class="card-footer border-secondary d-flex justify-content-end flex-wrap gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" @click="closeParseSettingsModal">
+              Cancelar
+            </button>
+            <button type="button" class="btn btn-sm btn-primary" @click="saveParseSettingsFromModal">
+              Salvar
+            </button>
           </div>
         </div>
       </div>

@@ -10,8 +10,17 @@
     statusMix,
   } = window.IisLogCore
 
-  const { createApp, ref, shallowRef, computed, watch, nextTick, reactive, unref, onUnmounted } =
-    Vue
+  const {
+    createApp,
+    ref,
+    shallowRef,
+    computed,
+    watch,
+    nextTick,
+    reactive,
+    unref,
+    onUnmounted,
+  } = Vue
 
   const PALETTE = [
     'rgb(255, 99, 132)',
@@ -42,6 +51,17 @@
   const MODAL_APP_ALL = '__ALL__'
 
   const DASHBOARD_STORAGE_KEY = 'iis-log-viewer-dashboard-layout-v1'
+  const PARSE_SETTINGS_STORAGE_KEY = 'iis-log-viewer-parse-settings-v1'
+
+  /** Endpoints SignalR “barulho” — iniciam desmarcados no filtro stem. */
+  function isDefaultExcludedSignalrRel(rel) {
+    if (!rel || typeof rel !== 'string') return false
+    const r = rel.startsWith('/') ? rel : `/${rel}`
+    return (
+      /^\/signalr\/signalr\/(abort|connect|hubs|negotiate|ping|poll|send|start)$/i.test(r) ||
+      /^\/signalr\/(abort|connect|hubs|negotiate|ping|poll|send|start)$/i.test(r)
+    )
+  }
 
   const WIDGET_TYPES = {
     STAT_COUNT: 'stat-count',
@@ -327,6 +347,62 @@
       const staticExtIncluded = reactive({})
       const endpointStemIncluded = reactive({})
 
+      function loadParseSettingsFromStorage() {
+        try {
+          const raw = localStorage.getItem(PARSE_SETTINGS_STORAGE_KEY)
+          if (raw) {
+            const o = JSON.parse(raw)
+            return {
+              samplingEnabled: o.samplingEnabled !== false,
+              targetLines: clampDim(Number(o.targetLines) || 320_000, 10_000, 10_000_000),
+              maxRows: clampDim(Number(o.maxRows) || 350_000, 50_000, 5_000_000),
+            }
+          }
+        } catch (_) {}
+        return { samplingEnabled: true, targetLines: 320_000, maxRows: 350_000 }
+      }
+
+      const parseSettingsInitial = loadParseSettingsFromStorage()
+      const parseSamplingEnabled = ref(parseSettingsInitial.samplingEnabled)
+      const parseTargetLines = ref(parseSettingsInitial.targetLines)
+      const parseMaxRows = ref(parseSettingsInitial.maxRows)
+      const parseSettingsModalOpen = ref(false)
+      const parseSettingsDraft = reactive({
+        samplingEnabled: parseSettingsInitial.samplingEnabled,
+        targetLines: parseSettingsInitial.targetLines,
+        maxRows: parseSettingsInitial.maxRows,
+      })
+
+      function openParseSettingsModal() {
+        parseSettingsDraft.samplingEnabled = parseSamplingEnabled.value
+        parseSettingsDraft.targetLines = parseTargetLines.value
+        parseSettingsDraft.maxRows = parseMaxRows.value
+        parseSettingsModalOpen.value = true
+      }
+
+      function closeParseSettingsModal() {
+        parseSettingsModalOpen.value = false
+      }
+
+      function saveParseSettingsFromModal() {
+        parseSamplingEnabled.value = !!parseSettingsDraft.samplingEnabled
+        parseTargetLines.value = clampDim(Number(parseSettingsDraft.targetLines) || 320_000, 10_000, 10_000_000)
+        parseMaxRows.value = clampDim(Number(parseSettingsDraft.maxRows) || 350_000, 50_000, 5_000_000)
+        parseSettingsDraft.targetLines = parseTargetLines.value
+        parseSettingsDraft.maxRows = parseMaxRows.value
+        try {
+          localStorage.setItem(
+            PARSE_SETTINGS_STORAGE_KEY,
+            JSON.stringify({
+              samplingEnabled: parseSamplingEnabled.value,
+              targetLines: parseTargetLines.value,
+              maxRows: parseMaxRows.value,
+            }),
+          )
+        } catch (_) {}
+        parseSettingsModalOpen.value = false
+      }
+
       function clearStemFilters() {
         Object.keys(staticExtIncluded).forEach((k) => delete staticExtIncluded[k])
         Object.keys(endpointStemIncluded).forEach((k) => delete endpointStemIncluded[k])
@@ -347,13 +423,15 @@
           }
         }
         for (const ext of staticSeen) {
-          if (!(ext in staticExtIncluded)) staticExtIncluded[ext] = true
+          if (!(ext in staticExtIncluded)) staticExtIncluded[ext] = false
         }
         Object.keys(staticExtIncluded).forEach((ext) => {
           if (!staticSeen.has(ext)) delete staticExtIncluded[ext]
         })
         for (const k of endpointSeen) {
-          if (!(k in endpointStemIncluded)) endpointStemIncluded[k] = true
+          if (!(k in endpointStemIncluded)) {
+            endpointStemIncluded[k] = !isDefaultExcludedSignalrRel(k)
+          }
         }
         Object.keys(endpointStemIncluded).forEach((k) => {
           if (!endpointSeen.has(k)) delete endpointStemIncluded[k]
@@ -1144,11 +1222,14 @@
 
         try {
           const totalLines = estimateLineCount(text)
-          const targetRows = 320_000
-          const sampleEvery = totalLines > targetRows ? Math.ceil(totalLines / targetRows) : 1
+          const sampleEvery =
+            !parseSamplingEnabled.value || totalLines <= parseTargetLines.value
+              ? 1
+              : Math.ceil(totalLines / parseTargetLines.value)
 
           const result = await parseIisLogText(text, {
             sampleEvery,
+            maxRows: parseMaxRows.value,
             onProgress(p) {
               progress.value = Math.min(99, Math.round((100 * p.lineIndex) / p.totalLines))
             },
@@ -1279,10 +1360,10 @@
       function resetStemFiltersToDefault() {
         mergeStemFilterDefaults()
         for (const row of discoveredStaticExtensions.value) {
-          staticExtIncluded[row.ext] = true
+          staticExtIncluded[row.ext] = false
         }
         Object.keys(endpointStemIncluded).forEach((k) => {
-          endpointStemIncluded[k] = true
+          endpointStemIncluded[k] = !isDefaultExcludedSignalrRel(k)
         })
       }
 
@@ -1318,6 +1399,14 @@
         toggleAllStaticExts,
         toggleAllModalEndpoints,
         resetStemFiltersToDefault,
+        parseSamplingEnabled,
+        parseTargetLines,
+        parseMaxRows,
+        parseSettingsModalOpen,
+        parseSettingsDraft,
+        openParseSettingsModal,
+        closeParseSettingsModal,
+        saveParseSettingsFromModal,
         layoutRows,
         layoutEditMode,
         layoutDragState,
