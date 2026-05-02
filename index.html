@@ -44,6 +44,14 @@
         </div>
       </nav>
 
+      <div
+        v-if="expandedWidgetUid && stats"
+        class="widget-fullscreen-backdrop"
+        role="presentation"
+        aria-hidden="true"
+        @click="closeWidgetFullscreen"
+      ></div>
+
       <main class="container-fluid flex-grow-1 pb-5 px-3">
         <input ref="fileInputRef" type="file" class="d-none" accept=".zip,.log" @change="onFileInput" />
 
@@ -171,8 +179,15 @@
             >
               <template v-for="(item, ci) in row" :key="item.uid">
                 <div
-                  :class="'col-12 col-lg-' + item.colSpan"
-                  class="dashboard-widget-col position-relative"
+                  :class="[
+                    'col-12',
+                    'col-lg-' + item.colSpan,
+                    'dashboard-widget-col',
+                    {
+                      'position-relative': expandedWidgetUid !== item.uid,
+                      'widget-fullscreen-active': expandedWidgetUid === item.uid,
+                    },
+                  ]"
                 >
                   <div
                     v-if="layoutEditMode"
@@ -202,7 +217,10 @@
                   ></div>
                   <div
                     class="card dashboard-widget-card bg-body-tertiary border-secondary h-100 d-flex flex-column"
-                    :class="{ 'dashboard-dd-card--swap': dropHintSwap(ri, ci) }"
+                    :class="{
+                      'dashboard-dd-card--swap': dropHintSwap(ri, ci),
+                      'dashboard-widget-card--expanded': expandedWidgetUid === item.uid,
+                    }"
                     @dragover="onSwapZoneDragOver($event, ri, ci)"
                     @drop.prevent="onSwapDrop($event, ri, ci)"
                   >
@@ -221,6 +239,19 @@
                     <i class="fas fa-grip-vertical" aria-hidden="true"></i>
                   </span>
                   <span class="flex-grow-1 small fw-semibold">{{ dashboardWidgetTitles[item.type] }}</span>
+                  <button
+                    v-if="stats"
+                    type="button"
+                    class="btn btn-sm btn-outline-light border-0 py-0 px-2"
+                    :title="expandedWidgetUid === item.uid ? 'Restaurar tamanho' : 'Ver em tela cheia'"
+                    @click.stop="toggleWidgetFullscreen(item.uid)"
+                  >
+                    <i
+                      class="fas fa-fw"
+                      :class="expandedWidgetUid === item.uid ? 'fa-compress-alt' : 'fa-expand-alt'"
+                      aria-hidden="true"
+                    ></i>
+                  </button>
                   <button
                     v-if="layoutEditMode"
                     type="button"
@@ -259,7 +290,9 @@
                 <template v-else-if="item.type === 'chart-timeline'">
                   <div
                     class="card-body chart-card flex-grow-1 p-0 position-relative"
-                    :style="{ height: (item.heightPx || 340) + 'px' }"
+                    :style="
+                      expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 340) + 'px' }
+                    "
                   >
                     <canvas v-if="timelineSeries" :ref="(el) => bindChartCanvas('timeline', el)"></canvas>
                   </div>
@@ -267,7 +300,14 @@
                 <template v-else-if="item.type === 'chart-status'">
                   <div
                     class="card-body flex-grow-1 overflow-auto"
-                    :style="{ minHeight: (item.heightPx || 340) + 'px', maxHeight: (item.heightPx || 340) + 'px' }"
+                    :style="
+                      expandedWidgetUid === item.uid
+                        ? {}
+                        : {
+                            minHeight: (item.heightPx || 340) + 'px',
+                            maxHeight: (item.heightPx || 340) + 'px',
+                          }
+                    "
                   >
                     <ul class="list-unstyled mb-0 small">
                       <li
@@ -284,17 +324,21 @@
                 <template v-else-if="item.type === 'chart-endpoints'">
                   <div
                     class="card-body chart-card flex-grow-1 p-0"
-                    :style="{ height: (item.heightPx || 380) + 'px' }"
+                    :style="
+                      expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 380) + 'px' }
+                    "
                   >
                     <canvas v-if="endpointChart" :ref="(el) => bindChartCanvas('endpoint', el)"></canvas>
                   </div>
                 </template>
                 <template v-else-if="item.type === 'chart-ips'">
-                  <div class="card-body flex-grow-1 p-0">
-                    <p class="small text-secondary px-3 pt-2 mb-0">Limiar: ≥ {{ slowThresholdMs }} ms</p>
+                  <div class="card-body flex-grow-1 p-0 d-flex flex-column min-h-0-flex">
+                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">Limiar: ≥ {{ slowThresholdMs }} ms</p>
                     <div
-                      class="chart-card px-0"
-                      :style="{ height: (item.heightPx || 380) + 'px' }"
+                      class="chart-card px-0 flex-grow-1 min-h-0-flex"
+                      :style="
+                        expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 380) + 'px' }
+                      "
                     >
                       <canvas v-if="slowIpChart" :ref="(el) => bindChartCanvas('slowIp', el)"></canvas>
                       <p v-else class="text-secondary small p-3 mb-0">Sem requisições acima do limite.</p>
@@ -302,8 +346,15 @@
                   </div>
                 </template>
                 <template v-else-if="item.type === 'table-slow'">
-                  <div class="card-body p-0 flex-grow-1 d-flex flex-column">
-                    <div class="table-responsive flex-grow-1" :style="{ maxHeight: (item.heightPx || 420) + 'px' }">
+                  <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
+                    <div
+                      class="table-responsive flex-grow-1 min-h-0-flex"
+                      :style="
+                        expandedWidgetUid === item.uid
+                          ? {}
+                          : { maxHeight: (item.heightPx || 420) + 'px' }
+                      "
+                    >
                       <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
                         <thead>
                           <tr>

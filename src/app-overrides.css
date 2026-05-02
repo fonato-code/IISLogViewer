@@ -36,6 +36,10 @@ body {
   background: rgba(var(--bs-primary-rgb), 0.15);
 }
 
+.min-h-0-flex {
+  min-height: 0;
+}
+
 .dashboard-layout-row {
   min-height: 0;
 }
@@ -198,6 +202,86 @@ body.iis-layout-arranging .dashboard-dd-strip-hint {
 
 .widget-col-resize-handle:hover {
   background: rgba(var(--bs-primary-rgb), 0.4);
+}
+
+/* Tela cheia por widget (um canvas Chart.js por tipo — mantém o mesmo elemento no DOM) */
+.widget-fullscreen-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1075;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+/*
+ * Tela cheia: Bootstrap usa .position-relative { position: relative !important } nas colunas.
+ * Sem position:fixed !important o cartão permanece no fluxo do .row e vira uma faixa estranha.
+ */
+.dashboard-widget-col.widget-fullscreen-active {
+  position: fixed !important;
+  top: 0.65rem !important;
+  left: 0.65rem !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: calc(100vw - 1.3rem) !important;
+  height: calc(100vh - 1.3rem) !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 1085;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: none !important;
+  align-self: stretch !important;
+}
+
+.dashboard-widget-col.widget-fullscreen-active .dashboard-dd-strip,
+.dashboard-widget-col.widget-fullscreen-active .widget-col-resize-handle {
+  display: none !important;
+}
+
+.dashboard-widget-col.widget-fullscreen-active > .dashboard-widget-card {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
+.dashboard-widget-card.dashboard-widget-card--expanded {
+  min-height: 0 !important;
+}
+
+.dashboard-widget-card.dashboard-widget-card--expanded .chart-card {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+/* chart-ips: corpo com legenda + área do canvas empilhados */
+.dashboard-widget-card.dashboard-widget-card--expanded > .card-body.min-h-0-flex.d-flex {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+}
+
+.dashboard-widget-card.dashboard-widget-card--expanded .card-body.overflow-auto {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
+.dashboard-widget-card.dashboard-widget-card--expanded .table-responsive {
+  max-height: none !important;
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow: auto;
+}
+
+.dashboard-widget-card.dashboard-widget-card--expanded > .card-body:not(.p-0):not(.chart-card) {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
 }
 
 .drop-zone {

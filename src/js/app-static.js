@@ -466,6 +466,12 @@
       const layoutDragState = ref(null)
       /** Preview da zona sob o cursor: inserir na linha ou trocar no cartão. */
       const layoutDropHint = ref(null)
+      /** `uid` do widget exibido em overlay de tela cheia (`null` = nenhum). */
+      const expandedWidgetUid = ref(null)
+
+      function onFullscreenEscapeKey(e) {
+        if (e.key === 'Escape') expandedWidgetUid.value = null
+      }
 
       const addWidgetLabels = {
         [WIDGET_TYPES.STAT_COUNT]: 'Requisições',
@@ -1076,8 +1082,32 @@
         { immediate: true },
       )
 
+      watch(expandedWidgetUid, (uid) => {
+        document.body.style.overflow = uid ? 'hidden' : ''
+        if (uid) {
+          window.addEventListener('keydown', onFullscreenEscapeKey)
+        } else {
+          window.removeEventListener('keydown', onFullscreenEscapeKey)
+        }
+        nextTick(() => {
+          chartTimeline?.resize()
+          chartEndpoint?.resize()
+          chartSlowIp?.resize()
+        })
+      })
+
+      function toggleWidgetFullscreen(uid) {
+        expandedWidgetUid.value = expandedWidgetUid.value === uid ? null : uid
+      }
+
+      function closeWidgetFullscreen() {
+        expandedWidgetUid.value = null
+      }
+
       onUnmounted(() => {
         document.body.classList.remove('iis-layout-arranging')
+        document.body.style.overflow = ''
+        window.removeEventListener('keydown', onFullscreenEscapeKey)
       })
 
       watch(
@@ -1219,6 +1249,7 @@
         layoutEditMode.value = false
         layoutDragState.value = null
         layoutDropHint.value = null
+        expandedWidgetUid.value = null
         try {
           localStorage.removeItem(DASHBOARD_STORAGE_KEY)
         } catch (_) {}
@@ -1292,6 +1323,9 @@
         layoutDragState,
         dropHintInsert,
         dropHintSwap,
+        expandedWidgetUid,
+        toggleWidgetFullscreen,
+        closeWidgetFullscreen,
         addWidgetLabels,
         missingWidgetTypes,
         dashboardWidgetTitles,
