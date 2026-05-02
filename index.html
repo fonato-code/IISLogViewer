@@ -419,7 +419,10 @@
                         :key="st[0]"
                         class="d-flex justify-content-between py-1 border-bottom border-secondary"
                       >
-                        <span><code>{{ st[0] }}</code></span>
+                        <span>
+                          <code>{{ st[0] }}</code>
+                          <span class="text-secondary ms-1">— {{ httpStatusDescription(st[0]) }}</span>
+                        </span>
                         <span>{{ st[1].toLocaleString('pt-BR') }}</span>
                       </li>
                     </ul>

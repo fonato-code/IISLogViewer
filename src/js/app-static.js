@@ -161,6 +161,80 @@
     return { browser, version, base, os, type }
   }
 
+  /** Texto curto (pt-BR) para exibir ao lado do código em listagens de sc-status. */
+  function httpStatusDescription(code) {
+    const n = Number(code)
+    if (!Number.isFinite(n) || n < 100 || n > 599) return 'Código inválido'
+    const map = {
+      100: 'Continue',
+      101: 'Troca de protocolo',
+      102: 'Processando',
+      200: 'OK',
+      201: 'Criado',
+      202: 'Aceito',
+      203: 'Informação não autoritativa',
+      204: 'Sem conteúdo',
+      205: 'Reset de conteúdo',
+      206: 'Conteúdo parcial',
+      207: 'Multi-status',
+      208: 'Já reportado',
+      226: 'IM usado',
+      300: 'Múltiplas escolhas',
+      301: 'Movido permanentemente',
+      302: 'Encontrado',
+      303: 'Ver outro',
+      304: 'Não modificado',
+      305: 'Usar proxy',
+      307: 'Redirecionamento temporário',
+      308: 'Redirecionamento permanente',
+      400: 'Requisição inválida',
+      401: 'Não autorizado',
+      402: 'Pagamento necessário',
+      403: 'Proibido',
+      404: 'Não encontrado',
+      405: 'Método não permitido',
+      406: 'Não aceitável',
+      407: 'Autenticação de proxy necessária',
+      408: 'Tempo esgotado',
+      409: 'Conflito',
+      410: 'Removido',
+      411: 'Comprimento necessário',
+      413: 'Payload muito grande',
+      414: 'URI muito longa',
+      415: 'Tipo de mídia não suportado',
+      416: 'Intervalo não satisfatório',
+      417: 'Expectativa falhou',
+      421: 'Requisição mal direcionada',
+      422: 'Entidade não processável',
+      423: 'Bloqueado',
+      424: 'Dependência falhou',
+      425: 'Muito cedo',
+      426: 'Upgrade necessário',
+      428: 'Pré-requisito necessário',
+      429: 'Muitas requisições',
+      431: 'Campos de cabeçalho muito grandes',
+      451: 'Indisponível por motivos legais',
+      500: 'Erro interno do servidor',
+      501: 'Não implementado',
+      502: 'Gateway inválido',
+      503: 'Serviço indisponível',
+      504: 'Tempo esgotado no gateway',
+      505: 'Versão HTTP não suportada',
+      507: 'Armazenamento insuficiente',
+      508: 'Loop detectado',
+      510: 'Não estendido',
+      511: 'Autenticação de rede necessária',
+    }
+    if (map[n]) return map[n]
+    const c = Math.floor(n / 100)
+    if (c === 1) return 'Informativo'
+    if (c === 2) return 'Sucesso'
+    if (c === 3) return 'Redirecionamento'
+    if (c === 4) return 'Erro do cliente'
+    if (c === 5) return 'Erro do servidor'
+    return 'Desconhecido'
+  }
+
   if (typeof Chart !== 'undefined') {
     Chart.defaults.color = '#dee2e6'
     Chart.defaults.borderColor = 'rgba(255,255,255,0.08)'
@@ -2166,6 +2240,7 @@
         onStaticExtIncludedChange,
         onEndpointStemIncludedChange,
         fmtPercent,
+        httpStatusDescription,
         fmtBucket,
         loadFromText,
         consumeFile,
