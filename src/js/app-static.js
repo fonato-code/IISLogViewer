@@ -1249,7 +1249,7 @@
           const key = `${r.method}\t${stem}`
           let e = map.get(key)
           if (!e) {
-            e = { method: r.method, stem, sum: 0, count: 0, min: r.timeTaken, max: r.timeTaken }
+            e = { method: r.method, stem, sum: r.timeTaken, count: 1, min: r.timeTaken, max: r.timeTaken }
             map.set(key, e)
           } else {
             e.min = Math.min(e.min, r.timeTaken)
