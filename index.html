@@ -4,9 +4,236 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IIS Log Viewer</title>
+    <link rel="stylesheet" href="src/css/bootsrtap-v5.3.8.css" />
+    <link rel="stylesheet" href="src/fontawesome5pro/fontawesome-pro-5.8.2.css" />
+    <link rel="stylesheet" href="src/app-overrides.css" />
   </head>
   <body class="bg-body-secondary">
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
+    <div id="app" class="min-vh-100 d-flex flex-column">
+      <nav class="navbar navbar-expand-lg border-bottom bg-body-tertiary mb-3">
+        <div class="container-fluid">
+          <span class="navbar-brand mb-0 h1 text-primary">
+            <i class="fas fa-chart-line me-2" aria-hidden="true"></i>
+            IIS Log Viewer
+          </span>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <button type="button" class="btn btn-primary btn-sm" :disabled="loading" @click="onPickClick">
+              <i class="fas fa-file-archive me-1" aria-hidden="true"></i>
+              Importar ZIP / LOG
+            </button>
+            <button v-if="rows.length" type="button" class="btn btn-outline-secondary btn-sm" @click="clearData">
+              Limpar
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <main class="container-fluid flex-grow-1 pb-5 px-3">
+        <input ref="fileInputRef" type="file" class="d-none" accept=".zip,.log" @change="onFileInput" />
+
+        <div
+          class="drop-zone p-5 mb-4 text-center"
+          :class="{ dragover: dragOver }"
+          @dragenter.prevent="dragOver = true"
+          @dragover.prevent="dragOver = true"
+          @dragleave.prevent="dragOver = false"
+          @drop.prevent="onDrop"
+        >
+          <p class="mb-2 text-secondary">
+            Arraste um ZIP com arquivos <code>.log</code> do IIS ou um único <code>.log</code>.
+          </p>
+          <button type="button" class="btn btn-outline-primary" :disabled="loading" @click="onPickClick">
+            Escolher arquivo
+          </button>
+        </div>
+
+        <div v-if="loading" class="mb-4">
+          <div class="d-flex justify-content-between small text-secondary mb-1">
+            <span>Lendo e interpretando linhas…</span>
+            <span>{{ progress }}%</span>
+          </div>
+          <div class="progress" style="height: 6px">
+            <div
+              class="progress-bar progress-bar-striped progress-bar-animated"
+              :style="{ width: progress + '%' }"
+            ></div>
+          </div>
+        </div>
+
+        <div v-if="errorMsg" class="alert alert-danger" role="alert">{{ errorMsg }}</div>
+
+        <div v-if="meta && !loading" class="alert alert-secondary py-2 small mb-4" role="status">
+          <strong>{{ meta.filename }}</strong>
+          — linhas (aprox.): {{ meta.totalLines.toLocaleString('pt-BR') }} · parseadas:
+          {{ meta.parsed.toLocaleString('pt-BR') }}
+          <span v-if="meta.sampleEvery > 1" class="text-warning ms-1">
+            · amostragem 1/{{ meta.sampleEvery }} (arquivo grande)
+          </span>
+          <span v-if="meta.truncated" class="text-warning ms-1"> · truncado no limite de linhas</span>
+          <span v-if="meta.missingFields && meta.missingFields.length" class="text-danger ms-1">
+            · campos ausentes: {{ meta.missingFields.join(', ') }}
+          </span>
+        </div>
+
+        <template v-if="stats">
+          <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+              <div class="card bg-body-tertiary border-secondary h-100">
+                <div class="card-body py-3">
+                  <div class="text-secondary small">Requisições (filtro atual)</div>
+                  <div class="fs-4">{{ stats.count.toLocaleString('pt-BR') }}</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="card bg-body-tertiary border-secondary h-100">
+                <div class="card-body py-3">
+                  <div class="text-secondary small">Tempo médio</div>
+                  <div class="fs-4">{{ stats.avgMs }} ms</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="card bg-body-tertiary border-secondary h-100">
+                <div class="card-body py-3">
+                  <div class="text-secondary small">Pico (max)</div>
+                  <div class="fs-4">{{ stats.maxMs }} ms</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="card bg-body-tertiary border-secondary h-100">
+                <div class="card-body py-3">
+                  <div class="text-secondary small">Intervalo</div>
+                  <div class="small">{{ fmtBucket(stats.minTs) }} → {{ fmtBucket(stats.maxTs) }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-4 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label small mb-1">Lentidão ≥ (ms) — gráfico por IP e tabela</label>
+              <input
+                v-model.number="slowThresholdMs"
+                type="number"
+                min="0"
+                step="50"
+                class="form-control form-control-sm"
+              />
+            </div>
+            <div class="col-md-5">
+              <label class="form-label small mb-1">Filtrar IP cliente (contém)</label>
+              <input
+                v-model="ipFilter"
+                type="search"
+                class="form-control form-control-sm"
+                placeholder="ex: 200.195."
+              />
+            </div>
+            <div class="col-md-3 small text-secondary">
+              Janela temporal dos gráficos: ~{{ (bucketMs / 1000).toFixed(0) }}s
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-lg-8">
+              <div class="card bg-body-tertiary border-secondary chart-card h-100">
+                <div class="card-header border-secondary">
+                  Linha do tempo — média e pico de <code>time-taken</code>
+                </div>
+                <div v-if="timelineSeries" class="card-body" style="height: 340px">
+                  <canvas ref="timelineCanvas"></canvas>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-4">
+              <div class="card bg-body-tertiary border-secondary h-100">
+                <div class="card-header border-secondary">HTTP status</div>
+                <div class="card-body">
+                  <ul class="list-unstyled mb-0 small">
+                    <li
+                      v-for="row in statusBreakdown"
+                      :key="row[0]"
+                      class="d-flex justify-content-between py-1 border-bottom border-secondary"
+                    >
+                      <span><code>{{ row[0] }}</code></span>
+                      <span>{{ row[1].toLocaleString('pt-BR') }}</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+              <div class="card bg-body-tertiary border-secondary chart-card h-100">
+                <div class="card-header border-secondary">Endpoints com maior tempo médio (cs-uri-stem)</div>
+                <div v-if="endpointChart" class="card-body" style="height: 380px">
+                  <canvas ref="endpointCanvas"></canvas>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-6">
+              <div class="card bg-body-tertiary border-secondary chart-card h-100">
+                <div class="card-header border-secondary">
+                  IPs com mais requisições lentas (≥ {{ slowThresholdMs }} ms), ao longo do tempo
+                </div>
+                <div class="card-body" style="height: 380px">
+                  <canvas v-if="slowIpChart" ref="slowIpCanvas"></canvas>
+                  <p v-else class="text-secondary small mb-0">Sem requisições acima do limite no recorte atual.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card bg-body-tertiary border-secondary">
+            <div class="card-header border-secondary">
+              Requisições mais lentas (≥ {{ slowThresholdMs }} ms) — até 200 linhas
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive" style="max-height: 420px">
+                <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
+                  <thead>
+                    <tr>
+                      <th>Quando</th>
+                      <th>IP</th>
+                      <th>Método</th>
+                      <th>Stem</th>
+                      <th>Status</th>
+                      <th class="text-end">ms</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(r, idx) in slowTable" :key="idx">
+                      <td class="text-nowrap small">{{ fmtBucket(r.timestamp) }}</td>
+                      <td class="small"><code>{{ r.clientIp }}</code></td>
+                      <td class="small">{{ r.method }}</td>
+                      <td class="small text-truncate" style="max-width: 280px" :title="r.stem">{{ r.stem }}</td>
+                      <td class="small">{{ r.status }}</td>
+                      <td class="text-end small">{{ r.timeTaken }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <p v-else-if="!loading" class="text-secondary small">
+          Vue 3 via <code>src/js/vue.js</code> (sem build). Chart.js e JSZip vêm da CDN. Abra este
+          <code>index.html</code> por HTTP (ex.: Live Server) para os scripts da CDN funcionarem sem bloqueio de
+          arquivo local.
+          <br />
+          O formato segue o cabeçalho <code>#Fields</code> do IIS. Arquivos muito grandes usam amostragem automática.
+        </p>
+      </main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="src/js/vue.js"></script>
+    <script src="src/js/iis-log-core.js"></script>
+    <script src="src/js/app-static.js"></script>
   </body>
 </html>
