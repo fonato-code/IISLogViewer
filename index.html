@@ -392,13 +392,19 @@
                   </div>
                 </template>
                 <template v-else-if="item.type === 'chart-timeline'">
-                  <div
-                    class="card-body chart-card flex-grow-1 p-0 position-relative"
-                    :style="
-                      expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 340) + 'px' }
-                    "
-                  >
-                    <canvas v-if="timelineSeries" :ref="(el) => bindChartCanvas('timeline', el)"></canvas>
+                  <div class="card-body flex-grow-1 p-0 d-flex flex-column min-h-0-flex">
+                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">
+                      Clique no gráfico (eixo do tempo) para abrir o detalhamento das requisições naquele intervalo
+                      (±5 min antes e depois do bucket da coluna).
+                    </p>
+                    <div
+                      class="chart-card flex-grow-1 min-h-0-flex position-relative"
+                      :style="
+                        expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 340) + 'px' }
+                      "
+                    >
+                      <canvas v-if="timelineSeries" :ref="(el) => bindChartCanvas('timeline', el)"></canvas>
+                    </div>
                   </div>
                 </template>
                 <template v-else-if="item.type === 'chart-status'">
@@ -440,7 +446,10 @@
                 </template>
                 <template v-else-if="item.type === 'chart-ips'">
                   <div class="card-body flex-grow-1 p-0 d-flex flex-column min-h-0-flex">
-                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">Limiar: ≥ {{ slowThresholdMs }} ms</p>
+                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">
+                      Limiar: ≥ {{ slowThresholdMs }} ms · clique no eixo do tempo para detalhar requisições (±5 min em
+                      torno do bucket da coluna).
+                    </p>
                     <div
                       class="chart-card px-0 flex-grow-1 min-h-0-flex"
                       :style="
@@ -489,8 +498,38 @@
                       <i class="fas fa-info-circle text-info" aria-hidden="true"></i> para ver o
                       <code>cs(User-Agent)</code> bruto. Percentual sobre todas as requisições do filtro atual.
                     </p>
+                    <div class="px-3 pb-0 flex-shrink-0">
+                      <div class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                          <select
+                            class="form-select form-select-sm iis-dt-page-size"
+                            :value="uaTablePag.pageSize"
+                            @change="onUaTablePageSizeChange"
+                            aria-label="Linhas por página"
+                          >
+                            <option value="10">10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                          </select>
+                          <span class="small text-secondary">linhas por página</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                          <span class="small text-secondary mb-0">Buscar:</span>
+                          <input
+                            v-model.trim="uaTablePag.qDraft"
+                            type="search"
+                            class="form-control form-control-sm iis-dt-search"
+                            placeholder="Navegador, SO, UA…"
+                            autocomplete="off"
+                            @change="applyUaTableSearch"
+                            @keydown.enter.prevent="applyUaTableSearch"
+                          />
+                        </div>
+                      </div>
+                    </div>
                     <div
-                      class="table-responsive flex-grow-1 min-h-0-flex"
+                      class="table-responsive flex-grow-1 min-h-0-flex px-3"
                       :style="
                         expandedWidgetUid === item.uid
                           ? {}
@@ -513,7 +552,15 @@
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="(row, idx) in userAgentTable" :key="idx + '\t' + String(row.userAgent).slice(0, 64)">
+                          <tr v-if="!uaTablePaged.length">
+                            <td colspan="8" class="text-secondary small">
+                              <template v-if="uaTableFiltered.length === 0 && userAgentTable.length">
+                                Nenhuma linha corresponde à busca.
+                              </template>
+                              <template v-else>Nenhum user-agent neste recorte.</template>
+                            </td>
+                          </tr>
+                          <tr v-for="(row, idx) in uaTablePaged" :key="idx + '\t' + String(row.userAgent).slice(0, 64)">
                             <td class="text-center align-middle">
                               <span
                                 class="iis-ua-original-hint d-inline-flex text-info"
@@ -536,6 +583,31 @@
                         </tbody>
                       </table>
                     </div>
+                    <div class="iis-dt-footer px-3 pb-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                      <p class="small text-secondary mb-0">
+                        Mostrando {{ uaTableShowingFrom.toLocaleString('pt-BR') }} a
+                        {{ uaTableShowingTo.toLocaleString('pt-BR') }} de
+                        {{ uaTableFiltered.length.toLocaleString('pt-BR') }} entradas
+                      </p>
+                      <nav class="iis-pagination-dt btn-group btn-group-sm shadow-sm" aria-label="Paginação user-agents">
+                        <button type="button" class="btn btn-outline-secondary" :disabled="uaTablePag.page <= 1" title="Primeira" @click="uaTableFirstPage">«</button>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="uaTablePag.page <= 1" title="Anterior" @click="uaTablePrevPage">‹</button>
+                        <template v-for="(it, pi) in uaTablePagerPages" :key="'ua-' + pi + '-' + (it === 'ellipsis' ? 'e' : it)">
+                          <span v-if="it === 'ellipsis'" class="btn btn-sm btn-outline-secondary disabled border-0 px-2 user-select-none">…</span>
+                          <button
+                            v-else
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            :class="{ active: uaTablePag.page === it }"
+                            @click="uaTableSetPage(it)"
+                          >
+                            {{ it }}
+                          </button>
+                        </template>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="uaTablePag.page >= uaTableTotalPages" title="Próxima" @click="uaTableNextPage">›</button>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="uaTablePag.page >= uaTableTotalPages" title="Última" @click="uaTableLastPage">»</button>
+                      </nav>
+                    </div>
                   </div>
                 </template>
                 <template v-else-if="item.type === 'table-heavy-uri'">
@@ -552,8 +624,38 @@
                         <span>Atualizando lista…</span>
                       </div>
                     </div>
+                    <div class="px-3 pt-2 flex-shrink-0">
+                      <div class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                          <select
+                            class="form-select form-select-sm iis-dt-page-size"
+                            :value="heavyTablePag.pageSize"
+                            @change="onHeavyTablePageSizeChange"
+                            aria-label="Linhas por página"
+                          >
+                            <option value="10">10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                          </select>
+                          <span class="small text-secondary">linhas por página</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                          <span class="small text-secondary mb-0">Buscar:</span>
+                          <input
+                            v-model.trim="heavyTablePag.qDraft"
+                            type="search"
+                            class="form-control form-control-sm iis-dt-search"
+                            placeholder="Stem, método, ms…"
+                            autocomplete="off"
+                            @change="applyHeavyTableSearch"
+                            @keydown.enter.prevent="applyHeavyTableSearch"
+                          />
+                        </div>
+                      </div>
+                    </div>
                     <div
-                      class="table-responsive flex-grow-1 min-h-0-flex"
+                      class="table-responsive flex-grow-1 min-h-0-flex px-3"
                       :style="
                         expandedWidgetUid === item.uid
                           ? {}
@@ -573,8 +675,18 @@
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="(row, idx) in heavyUriTop200" :key="row.method + '\t' + row.stem + '\t' + idx">
-                            <td class="text-end small text-secondary">{{ idx + 1 }}</td>
+                          <tr v-if="!heavyTablePaged.length">
+                            <td colspan="7" class="text-secondary small">
+                              <template v-if="heavyTableFiltered.length === 0 && heavyUriTop200.length">
+                                Nenhuma linha corresponde à busca.
+                              </template>
+                              <template v-else>Nenhuma URI neste recorte.</template>
+                            </td>
+                          </tr>
+                          <tr v-for="(row, idx) in heavyTablePaged" :key="row.method + '\t' + row.stem + '\t' + idx">
+                            <td class="text-end small text-secondary">
+                              {{ (heavyTablePag.page - 1) * heavyTablePag.pageSize + idx + 1 }}
+                            </td>
                             <td class="small text-nowrap">{{ row.method }}</td>
                             <td class="small text-truncate" style="max-width: min(520px, 55vw)" :title="row.stem">
                               <code>{{ row.stem }}</code>
@@ -587,12 +699,67 @@
                         </tbody>
                       </table>
                     </div>
+                    <div class="iis-dt-footer px-3 pb-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                      <p class="small text-secondary mb-0">
+                        Mostrando {{ heavyTableShowingFrom.toLocaleString('pt-BR') }} a
+                        {{ heavyTableShowingTo.toLocaleString('pt-BR') }} de
+                        {{ heavyTableFiltered.length.toLocaleString('pt-BR') }} entradas
+                      </p>
+                      <nav class="iis-pagination-dt btn-group btn-group-sm shadow-sm" aria-label="Paginação TOP URIs">
+                        <button type="button" class="btn btn-outline-secondary" :disabled="heavyTablePag.page <= 1" title="Primeira" @click="heavyTableFirstPage">«</button>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="heavyTablePag.page <= 1" title="Anterior" @click="heavyTablePrevPage">‹</button>
+                        <template v-for="(it, pi) in heavyTablePagerPages" :key="'hu-' + pi + '-' + (it === 'ellipsis' ? 'e' : it)">
+                          <span v-if="it === 'ellipsis'" class="btn btn-sm btn-outline-secondary disabled border-0 px-2 user-select-none">…</span>
+                          <button
+                            v-else
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            :class="{ active: heavyTablePag.page === it }"
+                            @click="heavyTableSetPage(it)"
+                          >
+                            {{ it }}
+                          </button>
+                        </template>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="heavyTablePag.page >= heavyTableTotalPages" title="Próxima" @click="heavyTableNextPage">›</button>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="heavyTablePag.page >= heavyTableTotalPages" title="Última" @click="heavyTableLastPage">»</button>
+                      </nav>
+                    </div>
                   </div>
                 </template>
                 <template v-else-if="item.type === 'table-slow'">
                   <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0-flex">
+                    <div class="px-3 pt-2 flex-shrink-0">
+                      <div class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                          <select
+                            class="form-select form-select-sm iis-dt-page-size"
+                            :value="slowTablePag.pageSize"
+                            @change="onSlowTablePageSizeChange"
+                            aria-label="Linhas por página"
+                          >
+                            <option value="10">10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                          </select>
+                          <span class="small text-secondary">linhas por página</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                          <span class="small text-secondary mb-0">Buscar:</span>
+                          <input
+                            v-model.trim="slowTablePag.qDraft"
+                            type="search"
+                            class="form-control form-control-sm iis-dt-search"
+                            placeholder="IP, stem, status…"
+                            autocomplete="off"
+                            @change="applySlowTableSearch"
+                            @keydown.enter.prevent="applySlowTableSearch"
+                          />
+                        </div>
+                      </div>
+                    </div>
                     <div
-                      class="table-responsive flex-grow-1 min-h-0-flex"
+                      class="table-responsive flex-grow-1 min-h-0-flex px-3"
                       :style="
                         expandedWidgetUid === item.uid
                           ? {}
@@ -611,7 +778,15 @@
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="(r, idx) in slowTable" :key="idx">
+                          <tr v-if="!slowTablePaged.length">
+                            <td colspan="6" class="text-secondary small">
+                              <template v-if="slowTableFiltered.length === 0 && slowTable.length">
+                                Nenhuma linha corresponde à busca.
+                              </template>
+                              <template v-else>Sem requisições acima do limite.</template>
+                            </td>
+                          </tr>
+                          <tr v-for="(r, idx) in slowTablePaged" :key="'s-' + slowTablePag.page + '-' + idx + '-' + r.timestamp">
                             <td class="text-nowrap small">{{ fmtBucket(r.timestamp) }}</td>
                             <td class="small"><code>{{ r.clientIp }}</code></td>
                             <td class="small">{{ r.method }}</td>
@@ -623,6 +798,31 @@
                           </tr>
                         </tbody>
                       </table>
+                    </div>
+                    <div class="iis-dt-footer px-3 pb-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                      <p class="small text-secondary mb-0">
+                        Mostrando {{ slowTableShowingFrom.toLocaleString('pt-BR') }} a
+                        {{ slowTableShowingTo.toLocaleString('pt-BR') }} de
+                        {{ slowTableFiltered.length.toLocaleString('pt-BR') }} entradas
+                      </p>
+                      <nav class="iis-pagination-dt btn-group btn-group-sm shadow-sm" aria-label="Paginação lentas">
+                        <button type="button" class="btn btn-outline-secondary" :disabled="slowTablePag.page <= 1" title="Primeira" @click="slowTableFirstPage">«</button>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="slowTablePag.page <= 1" title="Anterior" @click="slowTablePrevPage">‹</button>
+                        <template v-for="(it, pi) in slowTablePagerPages" :key="'sl-' + pi + '-' + (it === 'ellipsis' ? 'e' : it)">
+                          <span v-if="it === 'ellipsis'" class="btn btn-sm btn-outline-secondary disabled border-0 px-2 user-select-none">…</span>
+                          <button
+                            v-else
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            :class="{ active: slowTablePag.page === it }"
+                            @click="slowTableSetPage(it)"
+                          >
+                            {{ it }}
+                          </button>
+                        </template>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="slowTablePag.page >= slowTableTotalPages" title="Próxima" @click="slowTableNextPage">›</button>
+                        <button type="button" class="btn btn-outline-secondary" :disabled="slowTablePag.page >= slowTableTotalPages" title="Última" @click="slowTableLastPage">»</button>
+                      </nav>
                     </div>
                   </div>
                 </template>
@@ -723,6 +923,34 @@
                   Desmarcar todos
                 </button>
               </div>
+              <div v-if="discoveredStaticExtensions.length" class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <select
+                    class="form-select form-select-sm iis-dt-page-size"
+                    :value="stemStaticTablePag.pageSize"
+                    @change="onStemStaticPageSizeChange"
+                    aria-label="Linhas por página"
+                  >
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                  <span class="small text-secondary">linhas por página</span>
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                  <span class="small text-secondary mb-0">Buscar:</span>
+                  <input
+                    v-model.trim="stemStaticTablePag.qDraft"
+                    type="search"
+                    class="form-control form-control-sm iis-dt-search"
+                    placeholder="Extensão, contagem…"
+                    autocomplete="off"
+                    @change="applyStemStaticSearch"
+                    @keydown.enter.prevent="applyStemStaticSearch"
+                  />
+                </div>
+              </div>
               <div class="stem-modal-scroll border border-secondary rounded">
                 <table class="table table-sm table-striped mb-0">
                   <thead class="sticky-top bg-body-tertiary border-bottom border-secondary">
@@ -756,7 +984,10 @@
                   </thead>
                   <tbody>
                     <template v-if="discoveredStaticExtensions.length">
-                      <tr v-for="row in sortedStaticModalRows" :key="row.ext">
+                      <tr v-if="!stemStaticPaged.length">
+                        <td colspan="3" class="text-secondary small">Nenhuma linha corresponde à busca.</td>
+                      </tr>
+                      <tr v-for="row in stemStaticPaged" :key="row.ext">
                         <td>
                           <input
                             :checked="staticExtIncluded[row.ext] !== false"
@@ -777,6 +1008,34 @@
                     </tr>
                   </tbody>
                 </table>
+              </div>
+              <div
+                v-if="discoveredStaticExtensions.length"
+                class="iis-dt-footer d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2"
+              >
+                <p class="small text-secondary mb-0">
+                  Mostrando {{ stemStaticShowingFrom.toLocaleString('pt-BR') }} a
+                  {{ stemStaticShowingTo.toLocaleString('pt-BR') }} de
+                  {{ stemStaticFiltered.length.toLocaleString('pt-BR') }} entradas
+                </p>
+                <nav class="iis-pagination-dt btn-group btn-group-sm shadow-sm" aria-label="Paginação estáticos">
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemStaticTablePag.page <= 1" title="Primeira" @click="stemStaticFirstPage">«</button>
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemStaticTablePag.page <= 1" title="Anterior" @click="stemStaticPrevPage">‹</button>
+                  <template v-for="(it, pi) in stemStaticPagerPages" :key="'ss-' + pi + '-' + (it === 'ellipsis' ? 'e' : it)">
+                    <span v-if="it === 'ellipsis'" class="btn btn-sm btn-outline-secondary disabled border-0 px-2 user-select-none">…</span>
+                    <button
+                      v-else
+                      type="button"
+                      class="btn btn-outline-secondary"
+                      :class="{ active: stemStaticTablePag.page === it }"
+                      @click="stemStaticSetPage(it)"
+                    >
+                      {{ it }}
+                    </button>
+                  </template>
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemStaticTablePag.page >= stemStaticTotalPages" title="Próxima" @click="stemStaticNextPage">›</button>
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemStaticTablePag.page >= stemStaticTotalPages" title="Última" @click="stemStaticLastPage">»</button>
+                </nav>
               </div>
             </section>
 
@@ -906,6 +1165,34 @@
                   </button>
                 </div>
               </div>
+              <div v-if="modalEndpointList.length" class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <select
+                    class="form-select form-select-sm iis-dt-page-size"
+                    :value="stemEndpointTablePag.pageSize"
+                    @change="onStemEndpointPageSizeChange"
+                    aria-label="Linhas por página"
+                  >
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                  <span class="small text-secondary">linhas por página</span>
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                  <span class="small text-secondary mb-0">Buscar:</span>
+                  <input
+                    v-model.trim="stemEndpointTablePag.qDraft"
+                    type="search"
+                    class="form-control form-control-sm iis-dt-search"
+                    placeholder="Chave relativa, req…"
+                    autocomplete="off"
+                    @change="applyStemEndpointSearch"
+                    @keydown.enter.prevent="applyStemEndpointSearch"
+                  />
+                </div>
+              </div>
               <div class="stem-modal-scroll border border-secondary rounded">
                 <table class="table table-sm table-striped mb-0">
                   <thead class="sticky-top bg-body-tertiary border-bottom border-secondary">
@@ -944,7 +1231,10 @@
                       </td>
                     </tr>
                     <template v-else>
-                      <tr v-for="row in sortedEndpointModalRows" :key="row.stateKey">
+                      <tr v-if="!stemEndpointPaged.length">
+                        <td colspan="3" class="text-secondary small">Nenhuma linha corresponde à busca.</td>
+                      </tr>
+                      <tr v-for="row in stemEndpointPaged" :key="row.stateKey">
                         <td>
                           <input
                             :checked="endpointStemIncluded[row.stateKey] !== false"
@@ -961,6 +1251,34 @@
                   </tbody>
                 </table>
               </div>
+              <div
+                v-if="modalEndpointList.length"
+                class="iis-dt-footer d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2"
+              >
+                <p class="small text-secondary mb-0">
+                  Mostrando {{ stemEndpointShowingFrom.toLocaleString('pt-BR') }} a
+                  {{ stemEndpointShowingTo.toLocaleString('pt-BR') }} de
+                  {{ stemEndpointFiltered.length.toLocaleString('pt-BR') }} entradas
+                </p>
+                <nav class="iis-pagination-dt btn-group btn-group-sm shadow-sm" aria-label="Paginação endpoints">
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemEndpointTablePag.page <= 1" title="Primeira" @click="stemEndpointFirstPage">«</button>
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemEndpointTablePag.page <= 1" title="Anterior" @click="stemEndpointPrevPage">‹</button>
+                  <template v-for="(it, pi) in stemEndpointPagerPages" :key="'se-' + pi + '-' + (it === 'ellipsis' ? 'e' : it)">
+                    <span v-if="it === 'ellipsis'" class="btn btn-sm btn-outline-secondary disabled border-0 px-2 user-select-none">…</span>
+                    <button
+                      v-else
+                      type="button"
+                      class="btn btn-outline-secondary"
+                      :class="{ active: stemEndpointTablePag.page === it }"
+                      @click="stemEndpointSetPage(it)"
+                    >
+                      {{ it }}
+                    </button>
+                  </template>
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemEndpointTablePag.page >= stemEndpointTotalPages" title="Próxima" @click="stemEndpointNextPage">›</button>
+                  <button type="button" class="btn btn-outline-secondary" :disabled="stemEndpointTablePag.page >= stemEndpointTotalPages" title="Última" @click="stemEndpointLastPage">»</button>
+                </nav>
+              </div>
             </section>
           </div>
           <div class="card-footer border-secondary d-flex justify-content-between flex-wrap gap-2">
@@ -973,6 +1291,228 @@
               Restaurar padrão (estáticos + SignalR excluídos)
             </button>
             <button type="button" class="btn btn-sm btn-primary" @click="closeStemModal">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="requestDetailModalOpen"
+        class="stem-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="requestDetailModalTitle"
+        @click.self="closeRequestDetailModal"
+      >
+        <div class="stem-modal-panel card border-secondary bg-body-tertiary shadow-lg" @click.stop style="max-width: min(1200px, 100vw - 2rem)">
+          <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span id="requestDetailModalTitle" class="fw-semibold">Detalhamento de requests</span>
+            <button type="button" class="btn-close btn-close-white" aria-label="Fechar" @click="closeRequestDetailModal"></button>
+          </div>
+          <div class="card-body overflow-auto flex-grow-1">
+            <p class="small text-secondary mb-2">{{ requestDetailHint }}</p>
+            <p class="small mb-2">
+              <strong>{{ requestDetailSnapshot.length.toLocaleString('pt-BR') }}</strong> requisição(ões) neste
+              intervalo (filtros atuais da análise).
+            </p>
+            <p v-if="requestDetailSearch" class="small text-secondary mb-2">
+              Filtro da tabela ativo · <strong>{{ requestDetailFilteredCount.toLocaleString('pt-BR') }}</strong>
+              linha(s).
+            </p>
+            <div class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <select
+                  class="form-select form-select-sm iis-dt-page-size"
+                  :value="requestDetailPageSize"
+                  @change="onRequestDetailPageSizeChange"
+                  aria-label="Linhas por página"
+                >
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+                <span class="small text-secondary">linhas por página</span>
+              </div>
+              <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                <span class="small text-secondary mb-0">Buscar:</span>
+                <input
+                  v-model.trim="requestDetailSearchDraft"
+                  type="search"
+                  class="form-control form-control-sm iis-dt-search"
+                  placeholder="IP, stem, status, ms…"
+                  autocomplete="off"
+                  aria-label="Buscar na tabela"
+                  @change="applyRequestDetailSearch"
+                  @keydown.enter.prevent="applyRequestDetailSearch"
+                />
+              </div>
+            </div>
+            <div class="table-responsive border border-secondary rounded" style="max-height: min(62vh, 640px)">
+              <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
+                <thead>
+                  <tr>
+                    <th
+                      scope="col"
+                      class="table-sort-th"
+                      role="button"
+                      tabindex="0"
+                      title="Ordenar"
+                      @click="sortRequestDetailColumn('timestamp')"
+                      @keydown.enter.prevent="sortRequestDetailColumn('timestamp')"
+                    >
+                      Quando
+                      <i class="ms-1 small" :class="faSortClass(requestDetailSort, 'timestamp')" aria-hidden="true"></i>
+                    </th>
+                    <th
+                      scope="col"
+                      class="table-sort-th"
+                      role="button"
+                      tabindex="0"
+                      title="Ordenar"
+                      @click="sortRequestDetailColumn('clientIp')"
+                      @keydown.enter.prevent="sortRequestDetailColumn('clientIp')"
+                    >
+                      IP
+                      <i class="ms-1 small" :class="faSortClass(requestDetailSort, 'clientIp')" aria-hidden="true"></i>
+                    </th>
+                    <th
+                      scope="col"
+                      class="table-sort-th"
+                      role="button"
+                      tabindex="0"
+                      title="Ordenar"
+                      @click="sortRequestDetailColumn('method')"
+                      @keydown.enter.prevent="sortRequestDetailColumn('method')"
+                    >
+                      Método
+                      <i class="ms-1 small" :class="faSortClass(requestDetailSort, 'method')" aria-hidden="true"></i>
+                    </th>
+                    <th
+                      scope="col"
+                      class="table-sort-th"
+                      role="button"
+                      tabindex="0"
+                      title="Ordenar"
+                      @click="sortRequestDetailColumn('stemGrouped')"
+                      @keydown.enter.prevent="sortRequestDetailColumn('stemGrouped')"
+                    >
+                      Stem
+                      <i class="ms-1 small" :class="faSortClass(requestDetailSort, 'stemGrouped')" aria-hidden="true"></i>
+                    </th>
+                    <th
+                      scope="col"
+                      class="table-sort-th"
+                      role="button"
+                      tabindex="0"
+                      title="Ordenar"
+                      @click="sortRequestDetailColumn('status')"
+                      @keydown.enter.prevent="sortRequestDetailColumn('status')"
+                    >
+                      Status
+                      <i class="ms-1 small" :class="faSortClass(requestDetailSort, 'status')" aria-hidden="true"></i>
+                    </th>
+                    <th
+                      scope="col"
+                      class="table-sort-th text-end"
+                      role="button"
+                      tabindex="0"
+                      title="Ordenar"
+                      @click="sortRequestDetailColumn('timeTaken')"
+                      @keydown.enter.prevent="sortRequestDetailColumn('timeTaken')"
+                    >
+                      ms
+                      <i class="ms-1 small" :class="faSortClass(requestDetailSort, 'timeTaken')" aria-hidden="true"></i>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-if="!requestDetailPagedRows.length">
+                    <td colspan="6" class="text-secondary small">
+                      <template v-if="requestDetailSnapshot.length && !requestDetailFilteredCount">
+                        Nenhuma linha corresponde à busca.
+                      </template>
+                      <template v-else>
+                        Nenhuma requisição neste intervalo (filtros atuais aplicados na análise).
+                      </template>
+                    </td>
+                  </tr>
+                  <tr
+                    v-for="(r, idx) in requestDetailPagedRows"
+                    :key="'rd-' + requestDetailPage + '-' + idx + '-' + r.timestamp + '-' + r.clientIp + '-' + (r.stem || '')"
+                  >
+                    <td class="text-nowrap small">{{ fmtBucket(r.timestamp) }}</td>
+                    <td class="small"><code>{{ r.clientIp }}</code></td>
+                    <td class="small">{{ r.method }}</td>
+                    <td class="small text-truncate" style="max-width: 280px" :title="r.stemGrouped">{{ r.stemGrouped }}</td>
+                    <td class="small">{{ r.status }}</td>
+                    <td class="text-end small">{{ r.timeTaken }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="iis-dt-footer d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2">
+              <p class="small text-secondary mb-0">
+                Mostrando {{ requestDetailShowingFrom.toLocaleString('pt-BR') }} a
+                {{ requestDetailShowingTo.toLocaleString('pt-BR') }} de
+                {{ requestDetailFilteredCount.toLocaleString('pt-BR') }} entradas
+              </p>
+              <nav class="iis-pagination-dt btn-group btn-group-sm shadow-sm" role="navigation" aria-label="Paginação">
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  :disabled="requestDetailPage <= 1"
+                  title="Primeira página"
+                  @click="requestDetailFirstPage"
+                >
+                  «
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  :disabled="requestDetailPage <= 1"
+                  title="Página anterior"
+                  @click="requestDetailPrevPage"
+                >
+                  ‹
+                </button>
+                <template v-for="(it, pi) in requestDetailPagerPages" :key="'rdp-' + pi + '-' + (it === 'ellipsis' ? 'e' : it)">
+                  <span v-if="it === 'ellipsis'" class="btn btn-sm btn-outline-secondary disabled border-0 px-2 user-select-none">…</span>
+                  <button
+                    v-else
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    :class="{ active: requestDetailPage === it }"
+                    @click="requestDetailSetPage(it)"
+                  >
+                    {{ it }}
+                  </button>
+                </template>
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  :disabled="requestDetailPage >= requestDetailTotalPages"
+                  title="Próxima página"
+                  @click="requestDetailNextPage"
+                >
+                  ›
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  :disabled="requestDetailPage >= requestDetailTotalPages"
+                  title="Última página"
+                  @click="requestDetailLastPage"
+                >
+                  »
+                </button>
+              </nav>
+            </div>
+          </div>
+          <div class="card-footer border-secondary d-flex flex-wrap justify-content-end gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetRequestDetailSort">
+              Ordenação inicial
+            </button>
+            <button type="button" class="btn btn-sm btn-primary" @click="closeRequestDetailModal">Fechar</button>
           </div>
         </div>
       </div>

@@ -411,3 +411,30 @@ body.iis-layout-arranging .dashboard-dd-strip-hint {
 .iis-ua-original-hint {
   cursor: help;
 }
+
+/* Toolbar / rodapé estilo “DataTables” (paginação + busca) */
+.iis-dt-toolbar .iis-dt-page-size {
+  width: auto;
+  min-width: 4.5rem;
+}
+
+.iis-dt-toolbar .iis-dt-search {
+  min-width: 12rem;
+  max-width: 22rem;
+}
+
+.iis-dt-footer {
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--bs-border-color);
+}
+
+.iis-pagination-dt .btn {
+  min-width: 2.15rem;
+}
+
+.iis-pagination-dt .btn.active {
+  z-index: 1;
+  color: var(--bs-body-bg);
+  background-color: var(--bs-body-color);
+  border-color: var(--bs-body-color);
+}

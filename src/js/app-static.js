@@ -37,6 +37,33 @@
   const PIE_IP_MAX_SLICES = 22
   const PIE_APP_MIN_REQUESTS = 100
   const USER_AGENT_TABLE_MAX_ROWS = 400
+  /** Margem antes/depois do bucket clicado no detalhamento temporal (ms). */
+  const REQUEST_DETAIL_MARGIN_MS = 5 * 60 * 1000
+
+  /**
+   * @param {number} current 1-based
+   * @param {number} totalPages
+   * @returns {Array<number | 'ellipsis'>}
+   */
+  function pagerWindow(current, totalPages) {
+    const tp = Math.max(1, totalPages | 0)
+    const c = Math.min(Math.max(1, current | 0), tp)
+    if (tp <= 9) return Array.from({ length: tp }, (_, i) => i + 1)
+    const set = new Set([1, tp, c - 1, c, c + 1])
+    for (const p of [...set]) {
+      if (p < 1 || p > tp) set.delete(p)
+    }
+    const sorted = [...set].sort((a, b) => a - b)
+    /** @type {Array<number | 'ellipsis'>} */
+    const out = []
+    let prev = 0
+    for (const p of sorted) {
+      if (prev && p - prev > 1) out.push('ellipsis')
+      out.push(p)
+      prev = p
+    }
+    return out
+  }
 
   function pieSliceColors(count) {
     const out = []
@@ -578,6 +605,169 @@
           .sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip))
       })
 
+      const requestDetailModalOpen = ref(false)
+      const requestDetailHint = ref('')
+      const requestDetailSnapshot = ref([])
+      const requestDetailSearch = ref('')
+      const requestDetailSearchDraft = ref('')
+      const requestDetailPageSize = ref(10)
+      const requestDetailPage = ref(1)
+      const requestDetailSort = ref({ key: 'timestamp', dir: 'asc' })
+      const requestDetailSortAtOpen = ref({ key: 'timestamp', dir: 'asc' })
+
+      function openRequestDetailFromBucket(bucketStartMs, bucketMsVal, sourceLabel) {
+        const t0 = bucketStartMs
+        const bm = Math.max(1000, bucketMsVal | 0)
+        const from = t0 - REQUEST_DETAIL_MARGIN_MS
+        const to = t0 + bm + REQUEST_DETAIL_MARGIN_MS
+        const rows = []
+        for (const r of baseRows.value) {
+          if (r.timestamp < from || r.timestamp > to) continue
+          rows.push({ ...r, stemGrouped: displayStemForGroupedChart(r) })
+        }
+        rows.sort((a, b) => a.timestamp - b.timestamp)
+        requestDetailSnapshot.value = rows
+        requestDetailSearch.value = ''
+        requestDetailSearchDraft.value = ''
+        requestDetailPageSize.value = 10
+        requestDetailPage.value = 1
+        const initial = { key: 'timestamp', dir: 'asc' }
+        requestDetailSort.value = { ...initial }
+        requestDetailSortAtOpen.value = { ...initial }
+        requestDetailHint.value =
+          `${sourceLabel} · coluna ${fmtBucket(t0)} (bucket ~${Math.round(bm / 1000)}s) · janela: ${fmtBucket(from)} → ${fmtBucket(to)}`
+        requestDetailModalOpen.value = true
+      }
+
+      function closeRequestDetailModal() {
+        requestDetailModalOpen.value = false
+        requestDetailSnapshot.value = []
+      }
+
+      function sortRequestDetailColumn(columnKey) {
+        const cur = requestDetailSort.value
+        if (cur.key !== columnKey) requestDetailSort.value = { key: columnKey, dir: 'asc' }
+        else requestDetailSort.value = { key: columnKey, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+      }
+
+      function resetRequestDetailSort() {
+        const o = requestDetailSortAtOpen.value
+        requestDetailSort.value = { key: o.key, dir: o.dir }
+      }
+
+      function applyRequestDetailSearch() {
+        requestDetailSearch.value = requestDetailSearchDraft.value.trim().toLowerCase()
+        requestDetailPage.value = 1
+      }
+
+      const requestDetailFilteredRows = computed(() => {
+        if (!requestDetailModalOpen.value) return []
+        const q = requestDetailSearch.value.trim().toLowerCase()
+        const snap = requestDetailSnapshot.value
+        if (!q) return snap.slice()
+        return snap.filter((r) => {
+          const hay = [
+            fmtBucket(r.timestamp),
+            r.clientIp,
+            r.method,
+            r.stemGrouped || '',
+            r.stem || '',
+            String(r.status),
+            String(r.timeTaken),
+            r.userAgent || '',
+          ]
+            .join(' ')
+            .toLowerCase()
+          return hay.indexOf(q) !== -1
+        })
+      })
+
+      const requestDetailFilteredCount = computed(() => requestDetailFilteredRows.value.length)
+
+      const requestDetailTotalPages = computed(() => {
+        const n = requestDetailFilteredCount.value
+        const ps = Math.max(1, requestDetailPageSize.value | 0)
+        return Math.max(1, Math.ceil(n / ps))
+      })
+
+      const requestDetailSortedRows = computed(() => {
+        const list = requestDetailFilteredRows.value.map((r) => ({ ...r }))
+        const { key, dir } = requestDetailSort.value
+        const m = dir === 'asc' ? 1 : -1
+        list.sort((a, b) => {
+          if (key === 'timestamp') return m * (a.timestamp - b.timestamp)
+          if (key === 'clientIp') return m * a.clientIp.localeCompare(b.clientIp, 'pt-BR', { sensitivity: 'base' })
+          if (key === 'method') return m * a.method.localeCompare(b.method, 'pt-BR', { sensitivity: 'base' })
+          if (key === 'stemGrouped')
+            return m * (a.stemGrouped || '').localeCompare(b.stemGrouped || '', 'pt-BR', { sensitivity: 'base' })
+          if (key === 'status') return m * (Number(a.status) - Number(b.status))
+          if (key === 'timeTaken') return m * (a.timeTaken - b.timeTaken)
+          return 0
+        })
+        return list
+      })
+
+      const requestDetailPagedRows = computed(() => {
+        const ps = Math.max(1, requestDetailPageSize.value | 0)
+        const page = Math.max(1, requestDetailPage.value | 0)
+        const all = requestDetailSortedRows.value
+        const start = (page - 1) * ps
+        return all.slice(start, start + ps)
+      })
+
+      const requestDetailPagerPages = computed(() =>
+        pagerWindow(requestDetailPage.value, requestDetailTotalPages.value),
+      )
+
+      const requestDetailShowingFrom = computed(() => {
+        const n = requestDetailFilteredCount.value
+        if (!n) return 0
+        return (requestDetailPage.value - 1) * Math.max(1, requestDetailPageSize.value | 0) + 1
+      })
+
+      const requestDetailShowingTo = computed(() => {
+        const n = requestDetailFilteredCount.value
+        if (!n) return 0
+        return Math.min(n, requestDetailPage.value * Math.max(1, requestDetailPageSize.value | 0))
+      })
+
+      watch([requestDetailFilteredCount, requestDetailPageSize], () => {
+        const maxP = requestDetailTotalPages.value
+        if (requestDetailPage.value > maxP) requestDetailPage.value = maxP
+        if (requestDetailPage.value < 1) requestDetailPage.value = 1
+      })
+
+      function requestDetailFirstPage() {
+        requestDetailPage.value = 1
+      }
+
+      function requestDetailLastPage() {
+        requestDetailPage.value = requestDetailTotalPages.value
+      }
+
+      function requestDetailSetPage(p) {
+        if (typeof p !== 'number' || p < 1) return
+        const maxP = requestDetailTotalPages.value
+        requestDetailPage.value = Math.min(maxP, p)
+      }
+
+      function requestDetailPrevPage() {
+        if (requestDetailPage.value > 1) requestDetailPage.value -= 1
+      }
+
+      function requestDetailNextPage() {
+        const maxP = requestDetailTotalPages.value
+        if (requestDetailPage.value < maxP) requestDetailPage.value += 1
+      }
+
+      function onRequestDetailPageSizeChange(ev) {
+        const v = Number(ev?.target?.value)
+        if (v === 10 || v === 20 || v === 50 || v === 100) {
+          requestDetailPageSize.value = v
+          requestDetailPage.value = 1
+        }
+      }
+
       const stemModalOpen = ref(false)
       /** Aplicação no modal: MODAL_APP_ALL = todas, ou nome de applicationOptions / APP_NONE */
       const modalEndpointApp = ref(MODAL_APP_ALL)
@@ -977,6 +1167,156 @@
         if (cur.key !== columnKey) endpointModalSort.value = { key: columnKey, dir: 'asc' }
         else endpointModalSort.value = { key: columnKey, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
       }
+
+      const stemStaticTablePag = reactive({ page: 1, pageSize: 10, q: '', qDraft: '' })
+      const stemEndpointTablePag = reactive({ page: 1, pageSize: 10, q: '', qDraft: '' })
+
+      const stemStaticFiltered = computed(() => {
+        const rows = sortedStaticModalRows.value
+        const q = stemStaticTablePag.q.trim().toLowerCase()
+        if (!q) return rows
+        return rows.filter((r) => {
+          const hay = `.${r.ext} ${r.count}`.toLowerCase()
+          return hay.indexOf(q) !== -1
+        })
+      })
+      const stemStaticTotalPages = computed(() =>
+        Math.max(1, Math.ceil(stemStaticFiltered.value.length / Math.max(1, stemStaticTablePag.pageSize | 0))),
+      )
+      const stemStaticPaged = computed(() => {
+        const ps = Math.max(1, stemStaticTablePag.pageSize | 0)
+        const pg = Math.max(1, stemStaticTablePag.page | 0)
+        const list = stemStaticFiltered.value
+        return list.slice((pg - 1) * ps, (pg - 1) * ps + ps)
+      })
+      const stemStaticPagerPages = computed(() => pagerWindow(stemStaticTablePag.page, stemStaticTotalPages.value))
+      const stemStaticShowingFrom = computed(() => {
+        const n = stemStaticFiltered.value.length
+        if (!n) return 0
+        return (stemStaticTablePag.page - 1) * Math.max(1, stemStaticTablePag.pageSize | 0) + 1
+      })
+      const stemStaticShowingTo = computed(() => {
+        const n = stemStaticFiltered.value.length
+        if (!n) return 0
+        return Math.min(n, stemStaticTablePag.page * Math.max(1, stemStaticTablePag.pageSize | 0))
+      })
+
+      const stemEndpointFiltered = computed(() => {
+        const rows = sortedEndpointModalRows.value
+        const q = stemEndpointTablePag.q.trim().toLowerCase()
+        if (!q) return rows
+        return rows.filter((r) => {
+          const hay = `${r.relStem} ${r.count}`.toLowerCase()
+          return hay.indexOf(q) !== -1
+        })
+      })
+      const stemEndpointTotalPages = computed(() =>
+        Math.max(1, Math.ceil(stemEndpointFiltered.value.length / Math.max(1, stemEndpointTablePag.pageSize | 0))),
+      )
+      const stemEndpointPaged = computed(() => {
+        const ps = Math.max(1, stemEndpointTablePag.pageSize | 0)
+        const pg = Math.max(1, stemEndpointTablePag.page | 0)
+        const list = stemEndpointFiltered.value
+        return list.slice((pg - 1) * ps, (pg - 1) * ps + ps)
+      })
+      const stemEndpointPagerPages = computed(() =>
+        pagerWindow(stemEndpointTablePag.page, stemEndpointTotalPages.value),
+      )
+      const stemEndpointShowingFrom = computed(() => {
+        const n = stemEndpointFiltered.value.length
+        if (!n) return 0
+        return (stemEndpointTablePag.page - 1) * Math.max(1, stemEndpointTablePag.pageSize | 0) + 1
+      })
+      const stemEndpointShowingTo = computed(() => {
+        const n = stemEndpointFiltered.value.length
+        if (!n) return 0
+        return Math.min(n, stemEndpointTablePag.page * Math.max(1, stemEndpointTablePag.pageSize | 0))
+      })
+
+      function applyStemStaticSearch() {
+        stemStaticTablePag.q = String(stemStaticTablePag.qDraft || '').trim().toLowerCase()
+        stemStaticTablePag.page = 1
+      }
+      function applyStemEndpointSearch() {
+        stemEndpointTablePag.q = String(stemEndpointTablePag.qDraft || '').trim().toLowerCase()
+        stemEndpointTablePag.page = 1
+      }
+      function onStemStaticPageSizeChange(ev) {
+        const v = Number(ev?.target?.value)
+        if (v === 10 || v === 20 || v === 50 || v === 100) {
+          stemStaticTablePag.pageSize = v
+          stemStaticTablePag.page = 1
+        }
+      }
+      function onStemEndpointPageSizeChange(ev) {
+        const v = Number(ev?.target?.value)
+        if (v === 10 || v === 20 || v === 50 || v === 100) {
+          stemEndpointTablePag.pageSize = v
+          stemEndpointTablePag.page = 1
+        }
+      }
+      function stemStaticFirstPage() {
+        stemStaticTablePag.page = 1
+      }
+      function stemStaticLastPage() {
+        stemStaticTablePag.page = stemStaticTotalPages.value
+      }
+      function stemStaticSetPage(p) {
+        if (typeof p !== 'number' || p < 1) return
+        stemStaticTablePag.page = Math.min(stemStaticTotalPages.value, p)
+      }
+      function stemStaticPrevPage() {
+        if (stemStaticTablePag.page > 1) stemStaticTablePag.page--
+      }
+      function stemStaticNextPage() {
+        if (stemStaticTablePag.page < stemStaticTotalPages.value) stemStaticTablePag.page++
+      }
+      function stemEndpointFirstPage() {
+        stemEndpointTablePag.page = 1
+      }
+      function stemEndpointLastPage() {
+        stemEndpointTablePag.page = stemEndpointTotalPages.value
+      }
+      function stemEndpointSetPage(p) {
+        if (typeof p !== 'number' || p < 1) return
+        stemEndpointTablePag.page = Math.min(stemEndpointTotalPages.value, p)
+      }
+      function stemEndpointPrevPage() {
+        if (stemEndpointTablePag.page > 1) stemEndpointTablePag.page--
+      }
+      function stemEndpointNextPage() {
+        if (stemEndpointTablePag.page < stemEndpointTotalPages.value) stemEndpointTablePag.page++
+      }
+
+      watch(
+        () => [stemStaticFiltered.value.length, stemStaticTablePag.pageSize],
+        () => {
+          const maxP = stemStaticTotalPages.value
+          if (stemStaticTablePag.page > maxP) stemStaticTablePag.page = maxP
+          if (stemStaticTablePag.page < 1) stemStaticTablePag.page = 1
+        },
+      )
+      watch(
+        () => [stemEndpointFiltered.value.length, stemEndpointTablePag.pageSize],
+        () => {
+          const maxP = stemEndpointTotalPages.value
+          if (stemEndpointTablePag.page > maxP) stemEndpointTablePag.page = maxP
+          if (stemEndpointTablePag.page < 1) stemEndpointTablePag.page = 1
+        },
+      )
+
+      watch(
+        () => discoveredStaticExtensions.value.length,
+        () => {
+          stemStaticTablePag.page = 1
+        },
+      )
+      watch(
+        () => modalEndpointList.value.length,
+        () => {
+          stemEndpointTablePag.page = 1
+        },
+      )
 
       const stemFilterExcludedCount = computed(() => {
         let n = 0
@@ -1435,6 +1775,7 @@
         const b = timelineBuckets(list, bucketMs.value)
         return {
           labels: b.map((x) => fmtBucket(x.t)),
+          bucketTs: b.map((x) => x.t),
           avgMs: b.map((x) => x.avg),
           maxMs: b.map((x) => x.max),
           counts: b.map((x) => x.count),
@@ -1460,6 +1801,7 @@
         if (!raw.labels.length) return null
         return {
           labels: raw.labels.map(fmtBucket),
+          bucketTs: raw.labels.slice(),
           datasets: raw.datasets,
         }
       })
@@ -1592,6 +1934,242 @@
           .slice(0, USER_AGENT_TABLE_MAX_ROWS)
       })
 
+      const uaTablePag = reactive({ page: 1, pageSize: 10, q: '', qDraft: '' })
+      const heavyTablePag = reactive({ page: 1, pageSize: 10, q: '', qDraft: '' })
+      const slowTablePag = reactive({ page: 1, pageSize: 10, q: '', qDraft: '' })
+
+      const uaTableFiltered = computed(() => {
+        const rows = userAgentTable.value
+        const q = uaTablePag.q.trim().toLowerCase()
+        if (!q) return rows
+        return rows.filter((row) => {
+          const hay = [row.browser, row.version, row.base, row.os, row.type, row.userAgent, String(row.count)]
+            .join(' ')
+            .toLowerCase()
+          return hay.indexOf(q) !== -1
+        })
+      })
+      const uaTableTotalPages = computed(() =>
+        Math.max(1, Math.ceil(uaTableFiltered.value.length / Math.max(1, uaTablePag.pageSize | 0))),
+      )
+      const uaTablePaged = computed(() => {
+        const ps = Math.max(1, uaTablePag.pageSize | 0)
+        const pg = Math.max(1, uaTablePag.page | 0)
+        const list = uaTableFiltered.value
+        return list.slice((pg - 1) * ps, (pg - 1) * ps + ps)
+      })
+      const uaTablePagerPages = computed(() => pagerWindow(uaTablePag.page, uaTableTotalPages.value))
+      const uaTableShowingFrom = computed(() => {
+        const n = uaTableFiltered.value.length
+        if (!n) return 0
+        return (uaTablePag.page - 1) * Math.max(1, uaTablePag.pageSize | 0) + 1
+      })
+      const uaTableShowingTo = computed(() => {
+        const n = uaTableFiltered.value.length
+        if (!n) return 0
+        return Math.min(n, uaTablePag.page * Math.max(1, uaTablePag.pageSize | 0))
+      })
+
+      const heavyTableFiltered = computed(() => {
+        const rows = heavyUriTop200.value
+        const q = heavyTablePag.q.trim().toLowerCase()
+        if (!q) return rows
+        return rows.filter((row) => {
+          const hay = [row.method, row.stem, String(row.min), String(row.max), String(row.avg), String(row.count)]
+            .join(' ')
+            .toLowerCase()
+          return hay.indexOf(q) !== -1
+        })
+      })
+      const heavyTableTotalPages = computed(() =>
+        Math.max(1, Math.ceil(heavyTableFiltered.value.length / Math.max(1, heavyTablePag.pageSize | 0))),
+      )
+      const heavyTablePaged = computed(() => {
+        const ps = Math.max(1, heavyTablePag.pageSize | 0)
+        const pg = Math.max(1, heavyTablePag.page | 0)
+        const list = heavyTableFiltered.value
+        return list.slice((pg - 1) * ps, (pg - 1) * ps + ps)
+      })
+      const heavyTablePagerPages = computed(() => pagerWindow(heavyTablePag.page, heavyTableTotalPages.value))
+      const heavyTableShowingFrom = computed(() => {
+        const n = heavyTableFiltered.value.length
+        if (!n) return 0
+        return (heavyTablePag.page - 1) * Math.max(1, heavyTablePag.pageSize | 0) + 1
+      })
+      const heavyTableShowingTo = computed(() => {
+        const n = heavyTableFiltered.value.length
+        if (!n) return 0
+        return Math.min(n, heavyTablePag.page * Math.max(1, heavyTablePag.pageSize | 0))
+      })
+
+      const slowTableFiltered = computed(() => {
+        const rows = slowTable.value
+        const q = slowTablePag.q.trim().toLowerCase()
+        if (!q) return rows
+        return rows.filter((r) => {
+          const hay = [
+            fmtBucket(r.timestamp),
+            r.clientIp,
+            r.method,
+            r.stemGrouped || '',
+            r.stem || '',
+            String(r.status),
+            String(r.timeTaken),
+          ]
+            .join(' ')
+            .toLowerCase()
+          return hay.indexOf(q) !== -1
+        })
+      })
+      const slowTableTotalPages = computed(() =>
+        Math.max(1, Math.ceil(slowTableFiltered.value.length / Math.max(1, slowTablePag.pageSize | 0))),
+      )
+      const slowTablePaged = computed(() => {
+        const ps = Math.max(1, slowTablePag.pageSize | 0)
+        const pg = Math.max(1, slowTablePag.page | 0)
+        const list = slowTableFiltered.value
+        return list.slice((pg - 1) * ps, (pg - 1) * ps + ps)
+      })
+      const slowTablePagerPages = computed(() => pagerWindow(slowTablePag.page, slowTableTotalPages.value))
+      const slowTableShowingFrom = computed(() => {
+        const n = slowTableFiltered.value.length
+        if (!n) return 0
+        return (slowTablePag.page - 1) * Math.max(1, slowTablePag.pageSize | 0) + 1
+      })
+      const slowTableShowingTo = computed(() => {
+        const n = slowTableFiltered.value.length
+        if (!n) return 0
+        return Math.min(n, slowTablePag.page * Math.max(1, slowTablePag.pageSize | 0))
+      })
+
+      function applyUaTableSearch() {
+        uaTablePag.q = String(uaTablePag.qDraft || '').trim().toLowerCase()
+        uaTablePag.page = 1
+      }
+      function onUaTablePageSizeChange(ev) {
+        const v = Number(ev?.target?.value)
+        if (v === 10 || v === 20 || v === 50 || v === 100) {
+          uaTablePag.pageSize = v
+          uaTablePag.page = 1
+        }
+      }
+      function uaTableFirstPage() {
+        uaTablePag.page = 1
+      }
+      function uaTableLastPage() {
+        uaTablePag.page = uaTableTotalPages.value
+      }
+      function uaTableSetPage(p) {
+        if (typeof p !== 'number' || p < 1) return
+        uaTablePag.page = Math.min(uaTableTotalPages.value, p)
+      }
+      function uaTablePrevPage() {
+        if (uaTablePag.page > 1) uaTablePag.page--
+      }
+      function uaTableNextPage() {
+        if (uaTablePag.page < uaTableTotalPages.value) uaTablePag.page++
+      }
+
+      function applyHeavyTableSearch() {
+        heavyTablePag.q = String(heavyTablePag.qDraft || '').trim().toLowerCase()
+        heavyTablePag.page = 1
+      }
+      function onHeavyTablePageSizeChange(ev) {
+        const v = Number(ev?.target?.value)
+        if (v === 10 || v === 20 || v === 50 || v === 100) {
+          heavyTablePag.pageSize = v
+          heavyTablePag.page = 1
+        }
+      }
+      function heavyTableFirstPage() {
+        heavyTablePag.page = 1
+      }
+      function heavyTableLastPage() {
+        heavyTablePag.page = heavyTableTotalPages.value
+      }
+      function heavyTableSetPage(p) {
+        if (typeof p !== 'number' || p < 1) return
+        heavyTablePag.page = Math.min(heavyTableTotalPages.value, p)
+      }
+      function heavyTablePrevPage() {
+        if (heavyTablePag.page > 1) heavyTablePag.page--
+      }
+      function heavyTableNextPage() {
+        if (heavyTablePag.page < heavyTableTotalPages.value) heavyTablePag.page++
+      }
+
+      function applySlowTableSearch() {
+        slowTablePag.q = String(slowTablePag.qDraft || '').trim().toLowerCase()
+        slowTablePag.page = 1
+      }
+      function onSlowTablePageSizeChange(ev) {
+        const v = Number(ev?.target?.value)
+        if (v === 10 || v === 20 || v === 50 || v === 100) {
+          slowTablePag.pageSize = v
+          slowTablePag.page = 1
+        }
+      }
+      function slowTableFirstPage() {
+        slowTablePag.page = 1
+      }
+      function slowTableLastPage() {
+        slowTablePag.page = slowTableTotalPages.value
+      }
+      function slowTableSetPage(p) {
+        if (typeof p !== 'number' || p < 1) return
+        slowTablePag.page = Math.min(slowTableTotalPages.value, p)
+      }
+      function slowTablePrevPage() {
+        if (slowTablePag.page > 1) slowTablePag.page--
+      }
+      function slowTableNextPage() {
+        if (slowTablePag.page < slowTableTotalPages.value) slowTablePag.page++
+      }
+
+      watch(
+        () => [uaTableFiltered.value.length, uaTablePag.pageSize],
+        () => {
+          const maxP = uaTableTotalPages.value
+          if (uaTablePag.page > maxP) uaTablePag.page = maxP
+          if (uaTablePag.page < 1) uaTablePag.page = 1
+        },
+      )
+      watch(
+        () => [heavyTableFiltered.value.length, heavyTablePag.pageSize],
+        () => {
+          const maxP = heavyTableTotalPages.value
+          if (heavyTablePag.page > maxP) heavyTablePag.page = maxP
+          if (heavyTablePag.page < 1) heavyTablePag.page = 1
+        },
+      )
+      watch(
+        () => [slowTableFiltered.value.length, slowTablePag.pageSize],
+        () => {
+          const maxP = slowTableTotalPages.value
+          if (slowTablePag.page > maxP) slowTablePag.page = maxP
+          if (slowTablePag.page < 1) slowTablePag.page = 1
+        },
+      )
+
+      watch(
+        () => rows.value.length,
+        () => {
+          uaTablePag.page = 1
+        },
+      )
+      watch(
+        () => [rows.value.length, heavyUriSortKey.value, heavyUriUseGrouping.value],
+        () => {
+          heavyTablePag.page = 1
+        },
+      )
+      watch(
+        () => [rows.value.length, slowThresholdMs.value],
+        () => {
+          slowTablePag.page = 1
+        },
+      )
+
       function setHeavyUriSort(key) {
         if (key !== 'max' && key !== 'min' && key !== 'avg' && key !== 'count') return
         if (heavyUriSortKey.value === key) return
@@ -1698,6 +2276,28 @@
               responsive: true,
               maintainAspectRatio: false,
               interaction: { mode: 'index', intersect: false },
+              onHover: (e, els, ch) => {
+                const c = ch?.canvas
+                if (!c) return
+                if (layoutEditMode.value) {
+                  c.style.cursor = 'default'
+                  return
+                }
+                c.style.cursor = els?.length ? 'pointer' : 'default'
+              },
+              onClick: (e, els, ch) => {
+                if (layoutEditMode.value) return
+                let idx = els?.[0]?.index
+                if (idx == null) {
+                  const found = ch.getElementsAtEventForMode(e, 'index', { intersect: false }, true)
+                  idx = found?.[0]?.index
+                }
+                if (idx == null || idx < 0) return
+                const series = timelineSeries.value
+                const bm = bucketMs.value
+                if (!series?.bucketTs || idx >= series.bucketTs.length) return
+                openRequestDetailFromBucket(series.bucketTs[idx], bm, 'Linha do tempo')
+              },
               plugins: {
                 legend: { labels: { color: textColor } },
               },
@@ -1781,6 +2381,28 @@
               responsive: true,
               maintainAspectRatio: false,
               interaction: { mode: 'index', intersect: false },
+              onHover: (e, els, ch) => {
+                const c = ch?.canvas
+                if (!c) return
+                if (layoutEditMode.value) {
+                  c.style.cursor = 'default'
+                  return
+                }
+                c.style.cursor = els?.length ? 'pointer' : 'default'
+              },
+              onClick: (e, els, ch) => {
+                if (layoutEditMode.value) return
+                let idx = els?.[0]?.index
+                if (idx == null) {
+                  const found = ch.getElementsAtEventForMode(e, 'index', { intersect: false }, true)
+                  idx = found?.[0]?.index
+                }
+                if (idx == null || idx < 0) return
+                const sic = slowIpChart.value
+                const bm = bucketMs.value
+                if (!sic?.bucketTs || idx >= sic.bucketTs.length) return
+                openRequestDetailFromBucket(sic.bucketTs[idx], bm, 'IPs com mais requisições lentas')
+              },
               plugins: {
                 legend: { labels: { color: textColor, boxWidth: 12 } },
               },
@@ -1931,10 +2553,20 @@
         expandedWidgetUid.value = null
       }
 
+      function onRequestDetailEscapeKey(e) {
+        if (e.key === 'Escape' && requestDetailModalOpen.value) closeRequestDetailModal()
+      }
+
+      watch(requestDetailModalOpen, (open) => {
+        if (open) window.addEventListener('keydown', onRequestDetailEscapeKey)
+        else window.removeEventListener('keydown', onRequestDetailEscapeKey)
+      })
+
       onUnmounted(() => {
         document.body.classList.remove('iis-layout-arranging')
         document.body.style.overflow = ''
         window.removeEventListener('keydown', onFullscreenEscapeKey)
+        window.removeEventListener('keydown', onRequestDetailEscapeKey)
       })
 
       watch(
@@ -2102,6 +2734,12 @@
 
       function openStemModal() {
         stemModalOpen.value = true
+        stemStaticTablePag.page = 1
+        stemStaticTablePag.q = ''
+        stemStaticTablePag.qDraft = ''
+        stemEndpointTablePag.page = 1
+        stemEndpointTablePag.q = ''
+        stemEndpointTablePag.qDraft = ''
       }
 
       function closeStemModal() {
@@ -2177,8 +2815,60 @@
         faSortClass,
         sortStaticModalColumn,
         sortEndpointModalColumn,
+        stemStaticTablePag,
+        stemStaticFiltered,
+        stemStaticPaged,
+        stemStaticPagerPages,
+        stemStaticShowingFrom,
+        stemStaticShowingTo,
+        stemStaticTotalPages,
+        applyStemStaticSearch,
+        onStemStaticPageSizeChange,
+        stemStaticFirstPage,
+        stemStaticLastPage,
+        stemStaticSetPage,
+        stemStaticPrevPage,
+        stemStaticNextPage,
+        stemEndpointTablePag,
+        stemEndpointFiltered,
+        stemEndpointPaged,
+        stemEndpointPagerPages,
+        stemEndpointShowingFrom,
+        stemEndpointShowingTo,
+        stemEndpointTotalPages,
+        applyStemEndpointSearch,
+        onStemEndpointPageSizeChange,
+        stemEndpointFirstPage,
+        stemEndpointLastPage,
+        stemEndpointSetPage,
+        stemEndpointPrevPage,
+        stemEndpointNextPage,
         openStemModal,
         closeStemModal,
+        requestDetailModalOpen,
+        requestDetailHint,
+        requestDetailSnapshot,
+        requestDetailSearch,
+        requestDetailSearchDraft,
+        applyRequestDetailSearch,
+        requestDetailPageSize,
+        requestDetailPage,
+        requestDetailSort,
+        requestDetailFilteredCount,
+        requestDetailTotalPages,
+        requestDetailPagedRows,
+        requestDetailPagerPages,
+        requestDetailShowingFrom,
+        requestDetailShowingTo,
+        sortRequestDetailColumn,
+        resetRequestDetailSort,
+        requestDetailFirstPage,
+        requestDetailLastPage,
+        requestDetailSetPage,
+        requestDetailPrevPage,
+        requestDetailNextPage,
+        onRequestDetailPageSizeChange,
+        closeRequestDetailModal,
         toggleAllStaticExts,
         toggleAllModalEndpoints,
         resetStemFiltersToDefault,
@@ -2225,7 +2915,49 @@
         pieAppChart,
         statusBreakdown,
         slowTable,
+        slowTablePag,
+        slowTableFiltered,
+        slowTablePaged,
+        slowTablePagerPages,
+        slowTableTotalPages,
+        slowTableShowingFrom,
+        slowTableShowingTo,
+        applySlowTableSearch,
+        onSlowTablePageSizeChange,
+        slowTableFirstPage,
+        slowTableLastPage,
+        slowTableSetPage,
+        slowTablePrevPage,
+        slowTableNextPage,
         userAgentTable,
+        uaTablePag,
+        uaTableFiltered,
+        uaTablePaged,
+        uaTablePagerPages,
+        uaTableTotalPages,
+        uaTableShowingFrom,
+        uaTableShowingTo,
+        applyUaTableSearch,
+        onUaTablePageSizeChange,
+        uaTableFirstPage,
+        uaTableLastPage,
+        uaTableSetPage,
+        uaTablePrevPage,
+        uaTableNextPage,
+        heavyTablePag,
+        heavyTableFiltered,
+        heavyTablePaged,
+        heavyTablePagerPages,
+        heavyTableTotalPages,
+        heavyTableShowingFrom,
+        heavyTableShowingTo,
+        applyHeavyTableSearch,
+        onHeavyTablePageSizeChange,
+        heavyTableFirstPage,
+        heavyTableLastPage,
+        heavyTableSetPage,
+        heavyTablePrevPage,
+        heavyTableNextPage,
         heavyUriSortKey,
         heavyUriUseGrouping,
         heavyUriTop200,
