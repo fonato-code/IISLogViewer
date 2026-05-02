@@ -30,6 +30,16 @@
             >
               Limpar
             </button>
+            <button
+              v-if="stats"
+              type="button"
+              class="btn btn-sm"
+              :class="layoutEditMode ? 'btn-warning text-dark' : 'btn-outline-secondary'"
+              @click="layoutEditMode = !layoutEditMode"
+            >
+              <i class="fas fa-th-large me-1" aria-hidden="true"></i>
+              Arrumar layout
+            </button>
           </div>
         </div>
       </nav>
@@ -119,78 +129,100 @@
             </div>
           </div>
 
-          <div class="card mb-3 bg-body-tertiary border-secondary">
+          <div v-if="stats && layoutEditMode" class="card mb-3 bg-body-tertiary border-secondary">
             <div class="card-header py-2 border-secondary small fw-semibold">
-              Montar painel (grid Bootstrap 12 colunas)
+              Modo arrumar layout
             </div>
             <div class="card-body py-3">
-              <p class="small text-secondary mb-2">
-                Arraste um item para uma coluna <strong>1–12</strong> para inserir ou reposicionar. Largura do cartão:
-                select no cabeçalho. Altura dos gráficos/tabela: arraste a barra inferior do cartão.
-              </p>
-              <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-                <span
-                  v-for="def in paletteWidgetDefs"
-                  :key="def.type"
-                  draggable="true"
-                  class="badge rounded-pill bg-secondary"
-                  :class="{ 'opacity-50': isWidgetOnDashboard(def.type) }"
-                  style="cursor: grab"
-                  @dragstart="onDashboardPaletteDragStart($event, def.type)"
+              <ul class="small text-secondary mb-3 ps-3">
+                <li>
+                  <strong>Borda esquerda ou direita</strong> do bloco: soltar na faixa estreita para
+                  <strong>inserir</strong> na linha; as larguras são <strong>redistribuídas igualmente</strong> na grade
+                  de 12 colunas.
+                </li>
+                <li><strong>Centro do cartão</strong>: soltar sobre outro bloco para <strong>trocar</strong> lugar e largura.</li>
+                <li>
+                  <strong>Barra vertical</strong> à direita do bloco: arrastar para mudar a largura (aderência à grade de
+                  12). Altura: barra inferior dos gráficos/tabela.
+                </li>
+              </ul>
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <select
+                  v-if="missingWidgetTypes.length"
+                  class="form-select form-select-sm"
+                  style="max-width: 220px"
+                  aria-label="Adicionar bloco ao painel"
+                  @change="onAddWidgetChange($event)"
                 >
-                  <i class="fas fa-grip-vertical me-1" aria-hidden="true"></i>{{ def.shortLabel }}
-                </span>
-                <button type="button" class="btn btn-sm btn-outline-light ms-auto" @click="resetDashboardLayout">
+                  <option value="">Adicionar ao painel…</option>
+                  <option v-for="t in missingWidgetTypes" :key="t" :value="t">{{ addWidgetLabels[t] }}</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-outline-light" @click="resetDashboardLayout">
                   Layout padrão
                 </button>
               </div>
-              <div class="row row-cols-6 row-cols-lg-12 g-1 mb-1" @dragend="onDashboardSlotDragEnd">
-                <div v-for="slot in 12" :key="slot" class="col">
-                  <div
-                    class="dashboard-slot rounded py-2 text-center small user-select-none"
-                    :class="
-                      dashboardDropHover === slot - 1
-                        ? 'border border-primary bg-primary bg-opacity-10'
-                        : 'border border-secondary'
-                    "
-                    @dragover.prevent="dashboardDropHover = slot - 1"
-                    @drop.prevent="onDashboardSlotDrop($event, slot - 1)"
-                  >
-                    {{ slot }}
-                  </div>
-                </div>
-              </div>
-              <div class="small text-secondary">Cada número é uma posição de inserção na lista de widgets.</div>
             </div>
           </div>
 
-          <div class="row g-3 mb-4 align-items-stretch">
+          <template v-for="(row, ri) in layoutRows" :key="'dash-row-' + ri">
             <div
-              v-for="item in layoutItems"
-              :key="item.uid"
-              :class="'col-12 col-lg-' + item.colSpan"
-              class="dashboard-widget-col"
+              class="row g-3 mb-3 align-items-stretch dashboard-layout-row position-relative"
+              :data-dashboard-row="ri"
             >
-              <div class="card dashboard-widget-card bg-body-tertiary border-secondary h-100 d-flex flex-column">
+              <template v-for="(item, ci) in row" :key="item.uid">
+                <div
+                  :class="'col-12 col-lg-' + item.colSpan"
+                  class="dashboard-widget-col position-relative"
+                >
+                  <div
+                    v-if="layoutEditMode"
+                    class="dashboard-dd-strip dashboard-dd-left"
+                    :class="{ 'dashboard-dd-strip--active': dropHintInsert(ri, ci) }"
+                    title="Soltar aqui: inserir antes deste bloco (a linha redistribui as 12 colunas)"
+                    @dragover="onInsertStripDragOver($event, ri, ci)"
+                    @drop.prevent="onInsertDrop($event, ri, ci)"
+                  >
+                    <span class="dashboard-dd-strip-hint" aria-hidden="true">Inserir</span>
+                  </div>
+                  <div
+                    v-if="layoutEditMode"
+                    class="dashboard-dd-strip dashboard-dd-right"
+                    :class="{ 'dashboard-dd-strip--active': dropHintInsert(ri, ci + 1) }"
+                    title="Soltar aqui: inserir depois deste bloco (a linha redistribui as 12 colunas)"
+                    @dragover="onInsertStripDragOver($event, ri, ci + 1)"
+                    @drop.prevent="onInsertDrop($event, ri, ci + 1)"
+                  >
+                    <span class="dashboard-dd-strip-hint" aria-hidden="true">Inserir</span>
+                  </div>
+                  <div
+                    v-if="layoutEditMode && row.length >= 2"
+                    class="widget-col-resize-handle"
+                    title="Arrastar para mudar largura (grade 12)"
+                    @mousedown.stop="startColResize($event, ri, ci)"
+                  ></div>
+                  <div
+                    class="card dashboard-widget-card bg-body-tertiary border-secondary h-100 d-flex flex-column"
+                    :class="{ 'dashboard-dd-card--swap': dropHintSwap(ri, ci) }"
+                    @dragover="onSwapZoneDragOver($event, ri, ci)"
+                    @drop.prevent="onSwapDrop($event, ri, ci)"
+                  >
                 <div
                   class="card-header py-2 border-secondary d-flex flex-wrap align-items-center gap-2"
-                  draggable="true"
+                  :draggable="layoutEditMode"
                   @dragstart="onDashboardWidgetDragStart($event, item.uid)"
+                  @dragend="onDashboardWidgetDragEnd"
                 >
-                  <span class="text-secondary" style="cursor: grab" title="Arrastar para colunas 1–12">
+                  <span
+                    v-if="layoutEditMode"
+                    class="text-secondary"
+                    style="cursor: grab"
+                    title="Arrastar bloco"
+                  >
                     <i class="fas fa-grip-vertical" aria-hidden="true"></i>
                   </span>
                   <span class="flex-grow-1 small fw-semibold">{{ dashboardWidgetTitles[item.type] }}</span>
-                  <label class="small mb-0 text-secondary">Cols</label>
-                  <select
-                    class="form-select form-select-sm"
-                    style="width: 5.5rem"
-                    :value="item.colSpan"
-                    @change="setWidgetColSpan(item.uid, +$event.target.value)"
-                  >
-                    <option v-for="w in colSpanOptions" :key="w" :value="w">{{ w }}</option>
-                  </select>
                   <button
+                    v-if="layoutEditMode"
                     type="button"
                     class="btn btn-sm btn-outline-danger border-0 py-0 px-2"
                     title="Remover do painel"
@@ -239,12 +271,12 @@
                   >
                     <ul class="list-unstyled mb-0 small">
                       <li
-                        v-for="row in statusBreakdown"
-                        :key="row[0]"
+                        v-for="st in statusBreakdown"
+                        :key="st[0]"
                         class="d-flex justify-content-between py-1 border-bottom border-secondary"
                       >
-                        <span><code>{{ row[0] }}</code></span>
-                        <span>{{ row[1].toLocaleString('pt-BR') }}</span>
+                        <span><code>{{ st[0] }}</code></span>
+                        <span>{{ st[1].toLocaleString('pt-BR') }}</span>
                       </li>
                     </ul>
                   </div>
@@ -299,13 +331,35 @@
                 </template>
 
                 <div
-                  v-if="item.type.startsWith('chart-') || item.type === 'table-slow'"
+                  v-if="
+                    layoutEditMode &&
+                    (item.type.startsWith('chart-') || item.type === 'table-slow')
+                  "
                   class="widget-resize-handle"
                   title="Arrastar para alterar altura"
-                  @mousedown="startWidgetResize($event, item.uid)"
+                  @mousedown.stop="startWidgetResize($event, item.uid)"
                 ></div>
-              </div>
+                  </div>
+                </div>
+              </template>
             </div>
+          </template>
+
+          <div
+            v-if="layoutEditMode && layoutDragState"
+            class="dashboard-drag-legend"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="dashboard-drag-legend__item">
+              <span class="dashboard-drag-legend__swatch dashboard-drag-legend__swatch--insert"></span>
+              <strong>Faixa lateral</strong> (esquerda ou direita do bloco): <strong>inserir</strong> na linha e
+              igualar larguras.
+            </span>
+            <span class="dashboard-drag-legend__item">
+              <span class="dashboard-drag-legend__swatch dashboard-drag-legend__swatch--swap"></span>
+              <strong>Centro do cartão</strong>: <strong>trocar</strong> posição e largura com este bloco.
+            </span>
           </div>
         </template>
 
