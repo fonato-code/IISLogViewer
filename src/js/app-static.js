@@ -10,7 +10,7 @@
     statusMix,
   } = window.IisLogCore
 
-  const { createApp, ref, shallowRef, computed, watch, nextTick, reactive } = Vue
+  const { createApp, ref, shallowRef, computed, watch, nextTick, reactive, unref } = Vue
 
   const PALETTE = [
     'rgb(255, 99, 132)',
@@ -36,6 +36,77 @@
   }
 
   const APP_NONE = '(sem pasta raiz)'
+
+  /** Valor do select de aplicação no modal: listar stems de todas as aplicações. */
+  const MODAL_APP_ALL = '__ALL__'
+
+  const DASHBOARD_STORAGE_KEY = 'iis-log-viewer-dashboard-layout-v1'
+
+  const WIDGET_TYPES = {
+    STAT_COUNT: 'stat-count',
+    STAT_AVG: 'stat-avg',
+    STAT_MAX: 'stat-max',
+    STAT_RANGE: 'stat-range',
+    CHART_TIMELINE: 'chart-timeline',
+    CHART_STATUS: 'chart-status',
+    CHART_ENDPOINTS: 'chart-endpoints',
+    CHART_IPS: 'chart-ips',
+    TABLE_SLOW: 'table-slow',
+  }
+
+  const ALLOWED_WIDGET_TYPES = new Set(Object.values(WIDGET_TYPES))
+
+  function genDashboardUid() {
+    return `w-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`
+  }
+
+  function clampDim(n, lo, hi) {
+    return Math.max(lo, Math.min(hi, n))
+  }
+
+  function createDefaultDashboardLayout() {
+    return [
+      { uid: genDashboardUid(), type: WIDGET_TYPES.STAT_COUNT, colSpan: 3 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.STAT_AVG, colSpan: 3 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.STAT_MAX, colSpan: 3 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.STAT_RANGE, colSpan: 3 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_TIMELINE, colSpan: 8, heightPx: 340 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_STATUS, colSpan: 4, heightPx: 340 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_ENDPOINTS, colSpan: 6, heightPx: 380 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.CHART_IPS, colSpan: 6, heightPx: 380 },
+      { uid: genDashboardUid(), type: WIDGET_TYPES.TABLE_SLOW, colSpan: 12, heightPx: 420 },
+    ]
+  }
+
+  function normalizeDashboardLayout(arr) {
+    if (!Array.isArray(arr)) return []
+    const seen = new Set()
+    const out = []
+    for (const x of arr) {
+      if (!x || !ALLOWED_WIDGET_TYPES.has(x.type)) continue
+      if (seen.has(x.type)) continue
+      seen.add(x.type)
+      const colSpan = clampDim(parseInt(x.colSpan, 10) || 6, 3, 12)
+      let heightPx
+      if (x.heightPx != null && Number.isFinite(Number(x.heightPx))) {
+        heightPx = clampDim(Number(x.heightPx), 120, 1600)
+      }
+      out.push({
+        uid: typeof x.uid === 'string' ? x.uid : genDashboardUid(),
+        type: x.type,
+        colSpan,
+        heightPx,
+      })
+    }
+    return out
+  }
+
+  function defaultWidgetHeight(type) {
+    if (type === WIDGET_TYPES.CHART_TIMELINE || type === WIDGET_TYPES.CHART_STATUS) return 340
+    if (type === WIDGET_TYPES.CHART_ENDPOINTS || type === WIDGET_TYPES.CHART_IPS) return 380
+    if (type === WIDGET_TYPES.TABLE_SLOW) return 420
+    return 220
+  }
 
   /** Páginas / handlers dinâmicos — não entram no agrupamento “arquivo estático”. */
   const PAGE_EXTENSIONS = new Set([
@@ -88,6 +159,9 @@
     'mp3',
     'wav',
     'csv',
+    'xls',
+    'xlsx',
+    'xlsm',
     'cur',
     'swf',
     'wasm',
@@ -123,10 +197,6 @@
       return rest.length ? `/${rest.join('/')}` : '/'
     }
     return raw
-  }
-
-  function endpointStateKey(appKey, relStem) {
-    return `${appKey}::${relStem}`
   }
 
   createApp({
@@ -171,8 +241,8 @@
       })
 
       const stemModalOpen = ref(false)
-      /** Aplicação escolhida na tabela de endpoints do modal (valor = applicationOptions.name, APP_NONE permitido) */
-      const modalEndpointApp = ref('')
+      /** Aplicação no modal: MODAL_APP_ALL = todas, ou nome de applicationOptions / APP_NONE */
+      const modalEndpointApp = ref(MODAL_APP_ALL)
       const staticExtIncluded = reactive({})
       const endpointStemIncluded = reactive({})
 
@@ -191,9 +261,8 @@
             staticSeen.add(ext)
           } else {
             const appSeg = stemApplication(stem)
-            const ak = appKeyFromStem(stem)
             const rel = relativeStem(stem, appSeg)
-            endpointSeen.add(endpointStateKey(ak, rel))
+            endpointSeen.add(rel)
           }
         }
         for (const ext of staticSeen) {
@@ -217,10 +286,8 @@
           return staticExtIncluded[ext] !== false
         }
         const appSeg = stemApplication(stem)
-        const ak = appKeyFromStem(stem)
         const rel = relativeStem(stem, appSeg)
-        const k = endpointStateKey(ak, rel)
-        return endpointStemIncluded[k] !== false
+        return endpointStemIncluded[rel] !== false
       }
 
       const discoveredStaticExtensions = computed(() => {
@@ -230,33 +297,72 @@
           if (!isStaticAssetRow(r.stem, ext)) continue
           map.set(ext, (map.get(ext) || 0) + 1)
         }
-        return [...map.entries()]
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-          .map(([ext, count]) => ({ ext, count }))
+        return [...map.entries()].map(([ext, count]) => ({ ext, count }))
+      })
+
+      const staticModalSort = ref({ key: 'count', dir: 'desc' })
+      const endpointModalSort = ref({ key: 'count', dir: 'desc' })
+
+      const sortedStaticModalRows = computed(() => {
+        const list = discoveredStaticExtensions.value.map((r) => ({ ...r }))
+        const { key, dir } = staticModalSort.value
+        const m = dir === 'asc' ? 1 : -1
+        list.sort((a, b) => {
+          if (key === 'ext') return m * a.ext.localeCompare(b.ext, 'pt-BR', { sensitivity: 'base' })
+          return m * (a.count - b.count)
+        })
+        return list
       })
 
       const modalEndpointList = computed(() => {
         const app = modalEndpointApp.value
-        if (!app) return []
         const map = new Map()
         for (const r of rows.value) {
           const stem = r.stem
           const ext = getStemExtension(stem)
           if (isStaticAssetRow(stem, ext)) continue
-          const ak = appKeyFromStem(stem)
-          if (ak !== app) continue
           const appSeg = stemApplication(stem)
+          const ak = appKeyFromStem(stem)
           const rel = relativeStem(stem, appSeg)
+          if (app !== MODAL_APP_ALL && ak !== app) continue
           map.set(rel, (map.get(rel) || 0) + 1)
         }
-        return [...map.entries()]
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-          .map(([relStem, count]) => ({
-            relStem,
-            count,
-            stateKey: endpointStateKey(app, relStem),
-          }))
+        return [...map.entries()].map(([relStem, count]) => ({
+          relStem,
+          count,
+          /** Chave global do filtro: mesmo caminho sem app vale para todas as aplicações */
+          stateKey: relStem,
+        }))
       })
+
+      const sortedEndpointModalRows = computed(() => {
+        const list = modalEndpointList.value.map((r) => ({ ...r }))
+        const { key, dir } = endpointModalSort.value
+        const m = dir === 'asc' ? 1 : -1
+        list.sort((a, b) => {
+          if (key === 'relStem') return m * a.relStem.localeCompare(b.relStem, 'pt-BR', { sensitivity: 'base' })
+          return m * (a.count - b.count)
+        })
+        return list
+      })
+
+      function faSortClass(sortRef, columnKey) {
+        const cur = unref(sortRef)
+        if (!cur || cur.key !== columnKey) return 'fas fa-sort text-secondary opacity-50'
+        return cur.dir === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down'
+      }
+
+      function sortStaticModalColumn(columnKey) {
+        const cur = staticModalSort.value
+        if (cur.key !== columnKey) staticModalSort.value = { key: columnKey, dir: 'asc' }
+        else staticModalSort.value = { key: columnKey, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+      }
+
+      function sortEndpointModalColumn(columnKey) {
+        const cur = endpointModalSort.value
+        if (cur.key !== columnKey) endpointModalSort.value = { key: columnKey, dir: 'asc' }
+        else endpointModalSort.value = { key: columnKey, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+      }
 
       const stemFilterExcludedCount = computed(() => {
         let n = 0
@@ -272,9 +378,143 @@
       const fileInputRef = ref(null)
       const dragOver = ref(false)
 
-      const timelineCanvas = ref(null)
-      const endpointCanvas = ref(null)
-      const slowIpCanvas = ref(null)
+      const layoutItems = ref([])
+      const dashboardDropHover = ref(null)
+      const colSpanOptions = [3, 4, 6, 8, 9, 12]
+
+      const paletteWidgetDefs = [
+        { type: WIDGET_TYPES.STAT_COUNT, shortLabel: 'Requisições' },
+        { type: WIDGET_TYPES.STAT_AVG, shortLabel: 'Tempo médio' },
+        { type: WIDGET_TYPES.STAT_MAX, shortLabel: 'Pico (max)' },
+        { type: WIDGET_TYPES.STAT_RANGE, shortLabel: 'Intervalo' },
+        { type: WIDGET_TYPES.CHART_TIMELINE, shortLabel: 'Linha do tempo' },
+        { type: WIDGET_TYPES.CHART_STATUS, shortLabel: 'HTTP status' },
+        { type: WIDGET_TYPES.CHART_ENDPOINTS, shortLabel: 'Endpoints' },
+        { type: WIDGET_TYPES.CHART_IPS, shortLabel: 'IPs lentos' },
+        { type: WIDGET_TYPES.TABLE_SLOW, shortLabel: 'Req. lentas' },
+      ]
+
+      const dashboardWidgetTitles = {
+        [WIDGET_TYPES.STAT_COUNT]: 'Requisições (filtro atual)',
+        [WIDGET_TYPES.STAT_AVG]: 'Tempo médio',
+        [WIDGET_TYPES.STAT_MAX]: 'Pico (max)',
+        [WIDGET_TYPES.STAT_RANGE]: 'Intervalo',
+        [WIDGET_TYPES.CHART_TIMELINE]: 'Linha do tempo — média e pico de time-taken',
+        [WIDGET_TYPES.CHART_STATUS]: 'HTTP status',
+        [WIDGET_TYPES.CHART_ENDPOINTS]: 'Endpoints com maior tempo médio (cs-uri-stem)',
+        [WIDGET_TYPES.CHART_IPS]: 'IPs com mais requisições lentas (limiar ms)',
+        [WIDGET_TYPES.TABLE_SLOW]: 'Requisições mais lentas — tabela',
+      }
+
+      const chartCanvasEls = { timeline: null, endpoint: null, slowIp: null }
+
+      function bindChartCanvas(kind, el) {
+        const prev = chartCanvasEls[kind]
+        chartCanvasEls[kind] = el || null
+        if (prev !== chartCanvasEls[kind]) nextTick(() => updateCharts())
+      }
+
+      function parseDragPayload(ev) {
+        try {
+          return JSON.parse(ev.dataTransfer.getData('text/plain') || '{}')
+        } catch {
+          return {}
+        }
+      }
+
+      function onDashboardPaletteDragStart(ev, type) {
+        ev.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'palette', type }))
+        ev.dataTransfer.effectAllowed = 'copy'
+      }
+
+      function onDashboardWidgetDragStart(ev, uid) {
+        ev.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'widget', uid }))
+        ev.dataTransfer.effectAllowed = 'move'
+      }
+
+      function onDashboardSlotDragEnd() {
+        dashboardDropHover.value = null
+      }
+
+      function onDashboardSlotDrop(ev, slotIndex) {
+        ev.preventDefault()
+        dashboardDropHover.value = null
+        const data = parseDragPayload(ev)
+        const idx = clampDim(slotIndex, 0, layoutItems.value.length)
+        if (data.kind === 'palette' && ALLOWED_WIDGET_TYPES.has(data.type)) {
+          if (layoutItems.value.some((i) => i.type === data.type)) return
+          layoutItems.value.splice(idx, 0, {
+            uid: genDashboardUid(),
+            type: data.type,
+            colSpan: String(data.type).startsWith('stat-') ? 3 : 6,
+            heightPx: defaultWidgetHeight(data.type),
+          })
+          return
+        }
+        if (data.kind === 'widget' && data.uid) {
+          const cur = layoutItems.value.findIndex((i) => i.uid === data.uid)
+          if (cur === -1) return
+          const [item] = layoutItems.value.splice(cur, 1)
+          let insertAt = idx
+          if (cur < idx) insertAt -= 1
+          insertAt = clampDim(insertAt, 0, layoutItems.value.length)
+          layoutItems.value.splice(insertAt, 0, item)
+        }
+      }
+
+      function removeDashboardWidget(uid) {
+        const i = layoutItems.value.findIndex((x) => x.uid === uid)
+        if (i !== -1) layoutItems.value.splice(i, 1)
+      }
+
+      function setWidgetColSpan(uid, span) {
+        const it = layoutItems.value.find((x) => x.uid === uid)
+        if (it) it.colSpan = clampDim(span, 3, 12)
+      }
+
+      function resetDashboardLayout() {
+        layoutItems.value = createDefaultDashboardLayout()
+      }
+
+      function isWidgetOnDashboard(type) {
+        return layoutItems.value.some((i) => i.type === type)
+      }
+
+      function initDashboardLayout() {
+        try {
+          const raw = localStorage.getItem(DASHBOARD_STORAGE_KEY)
+          if (raw) {
+            const norm = normalizeDashboardLayout(JSON.parse(raw))
+            if (norm.length) {
+              layoutItems.value = norm
+              return
+            }
+          }
+        } catch (_) {}
+        layoutItems.value = createDefaultDashboardLayout()
+      }
+
+      function persistDashboardLayout() {
+        try {
+          localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(layoutItems.value))
+        } catch (_) {}
+      }
+
+      function startWidgetResize(ev, uid) {
+        const item = layoutItems.value.find((i) => i.uid === uid)
+        if (!item) return
+        const startY = ev.clientY
+        const base = item.heightPx ?? defaultWidgetHeight(item.type)
+        function onMove(e) {
+          item.heightPx = clampDim(base + (e.clientY - startY), 160, 1200)
+        }
+        function onUp() {
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+      }
 
       let chartTimeline = null
       let chartEndpoint = null
@@ -408,7 +648,7 @@
         }
 
         const s = timelineSeries.value
-        const c1 = timelineCanvas.value
+        const c1 = chartCanvasEls.timeline
         if (chartTimeline) {
           chartTimeline.destroy()
           chartTimeline = null
@@ -461,7 +701,7 @@
         }
 
         const ec = endpointChart.value
-        const c2 = endpointCanvas.value
+        const c2 = chartCanvasEls.endpoint
         if (chartEndpoint) {
           chartEndpoint.destroy()
           chartEndpoint = null
@@ -502,7 +742,7 @@
         }
 
         const sic = slowIpChart.value
-        const c3 = slowIpCanvas.value
+        const c3 = chartCanvasEls.slowIp
         if (chartSlowIp) {
           chartSlowIp.destroy()
           chartSlowIp = null
@@ -552,6 +792,15 @@
         { flush: 'post' },
       )
 
+      watch(
+        layoutItems,
+        () => {
+          persistDashboardLayout()
+          nextTick(() => updateCharts())
+        },
+        { deep: true, flush: 'post' },
+      )
+
       async function loadFromText(text, filename) {
         errorMsg.value = ''
         loading.value = true
@@ -564,7 +813,7 @@
         applicationFilter.value = ''
         clearStemFilters()
         stemModalOpen.value = false
-        modalEndpointApp.value = ''
+        modalEndpointApp.value = MODAL_APP_ALL
         destroyCharts()
 
         try {
@@ -581,6 +830,7 @@
 
           rows.value = result.rows
           mergeStemFilterDefaults()
+          if (!layoutItems.value.length) initDashboardLayout()
           meta.value = {
             filename,
             totalLines,
@@ -668,15 +918,16 @@
         applicationFilter.value = ''
         clearStemFilters()
         stemModalOpen.value = false
-        modalEndpointApp.value = ''
+        modalEndpointApp.value = MODAL_APP_ALL
+        layoutItems.value = []
+        try {
+          localStorage.removeItem(DASHBOARD_STORAGE_KEY)
+        } catch (_) {}
         destroyCharts()
       }
 
       function openStemModal() {
         stemModalOpen.value = true
-        if (!modalEndpointApp.value && applicationFilter.value) {
-          modalEndpointApp.value = applicationFilter.value
-        }
       }
 
       function closeStemModal() {
@@ -684,13 +935,13 @@
       }
 
       function toggleAllStaticExts(on) {
-        for (const row of discoveredStaticExtensions.value) {
+        for (const row of sortedStaticModalRows.value) {
           staticExtIncluded[row.ext] = on
         }
       }
 
       function toggleAllModalEndpoints(on) {
-        for (const row of modalEndpointList.value) {
+        for (const row of sortedEndpointModalRows.value) {
           endpointStemIncluded[row.stateKey] = on
         }
       }
@@ -719,21 +970,41 @@
         clientIpOptions,
         stemModalOpen,
         modalEndpointApp,
+        modalAppAll: MODAL_APP_ALL,
         staticExtIncluded,
         endpointStemIncluded,
         discoveredStaticExtensions,
         modalEndpointList,
+        sortedStaticModalRows,
+        sortedEndpointModalRows,
+        staticModalSort,
+        endpointModalSort,
         stemFilterExcludedCount,
+        faSortClass,
+        sortStaticModalColumn,
+        sortEndpointModalColumn,
         openStemModal,
         closeStemModal,
         toggleAllStaticExts,
         toggleAllModalEndpoints,
         resetStemFiltersToDefault,
+        layoutItems,
+        paletteWidgetDefs,
+        dashboardWidgetTitles,
+        dashboardDropHover,
+        colSpanOptions,
+        bindChartCanvas,
+        onDashboardPaletteDragStart,
+        onDashboardWidgetDragStart,
+        onDashboardSlotDrop,
+        onDashboardSlotDragEnd,
+        removeDashboardWidget,
+        setWidgetColSpan,
+        resetDashboardLayout,
+        isWidgetOnDashboard,
+        startWidgetResize,
         fileInputRef,
         dragOver,
-        timelineCanvas,
-        endpointCanvas,
-        slowIpCanvas,
         stats,
         bucketMs,
         timelineSeries,

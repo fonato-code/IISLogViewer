@@ -38,6 +38,7 @@
         <input ref="fileInputRef" type="file" class="d-none" accept=".zip,.log" @change="onFileInput" />
 
         <div
+          v-if="!rows.length"
           class="drop-zone p-5 mb-4 text-center"
           :class="{ dragover: dragOver }"
           @dragenter.prevent="dragOver = true"
@@ -69,42 +70,7 @@
         </div>
 
         <template v-if="stats">
-          <div class="row g-3 mb-4">
-            <div class="col-6 col-md-3">
-              <div class="card bg-body-tertiary border-secondary h-100">
-                <div class="card-body py-3">
-                  <div class="text-secondary small">Requisições (filtro atual)</div>
-                  <div class="fs-4">{{ stats.count.toLocaleString('pt-BR') }}</div>
-                </div>
-              </div>
-            </div>
-            <div class="col-6 col-md-3">
-              <div class="card bg-body-tertiary border-secondary h-100">
-                <div class="card-body py-3">
-                  <div class="text-secondary small">Tempo médio</div>
-                  <div class="fs-4">{{ stats.avgMs }} ms</div>
-                </div>
-              </div>
-            </div>
-            <div class="col-6 col-md-3">
-              <div class="card bg-body-tertiary border-secondary h-100">
-                <div class="card-body py-3">
-                  <div class="text-secondary small">Pico (max)</div>
-                  <div class="fs-4">{{ stats.maxMs }} ms</div>
-                </div>
-              </div>
-            </div>
-            <div class="col-6 col-md-3">
-              <div class="card bg-body-tertiary border-secondary h-100">
-                <div class="card-body py-3">
-                  <div class="text-secondary small">Intervalo</div>
-                  <div class="small">{{ fmtBucket(stats.minTs) }} → {{ fmtBucket(stats.maxTs) }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="row g-3 mb-2 align-items-end">
+          <div class="row g-3 mb-3 align-items-end">
             <div class="col-lg-3 col-md-6">
               <label class="form-label small mb-1">Lentidão ≥ (ms) — gráfico por IP e tabela</label>
               <input
@@ -146,93 +112,198 @@
               Marque/desmarque tipos de arquivo estático e caminhos de páginas/endpoints no modal.
             </div>
           </div>
-          <div class="row mb-4">
+          <div class="row mb-3">
             <div class="col-12 small text-secondary">
               Janela temporal dos gráficos: ~{{ (bucketMs / 1000).toFixed(0) }}s · filtros de aplicação, IP e stem são
               combinados (E lógico).
             </div>
           </div>
 
-          <div class="row g-4 mb-4">
-            <div class="col-lg-8">
-              <div class="card bg-body-tertiary border-secondary chart-card h-100">
-                <div class="card-header border-secondary">
-                  Linha do tempo — média e pico de <code>time-taken</code>
-                </div>
-                <div v-if="timelineSeries" class="card-body" style="height: 340px">
-                  <canvas ref="timelineCanvas"></canvas>
+          <div class="card mb-3 bg-body-tertiary border-secondary">
+            <div class="card-header py-2 border-secondary small fw-semibold">
+              Montar painel (grid Bootstrap 12 colunas)
+            </div>
+            <div class="card-body py-3">
+              <p class="small text-secondary mb-2">
+                Arraste um item para uma coluna <strong>1–12</strong> para inserir ou reposicionar. Largura do cartão:
+                select no cabeçalho. Altura dos gráficos/tabela: arraste a barra inferior do cartão.
+              </p>
+              <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <span
+                  v-for="def in paletteWidgetDefs"
+                  :key="def.type"
+                  draggable="true"
+                  class="badge rounded-pill bg-secondary"
+                  :class="{ 'opacity-50': isWidgetOnDashboard(def.type) }"
+                  style="cursor: grab"
+                  @dragstart="onDashboardPaletteDragStart($event, def.type)"
+                >
+                  <i class="fas fa-grip-vertical me-1" aria-hidden="true"></i>{{ def.shortLabel }}
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-light ms-auto" @click="resetDashboardLayout">
+                  Layout padrão
+                </button>
+              </div>
+              <div class="row row-cols-6 row-cols-lg-12 g-1 mb-1" @dragend="onDashboardSlotDragEnd">
+                <div v-for="slot in 12" :key="slot" class="col">
+                  <div
+                    class="dashboard-slot rounded py-2 text-center small user-select-none"
+                    :class="
+                      dashboardDropHover === slot - 1
+                        ? 'border border-primary bg-primary bg-opacity-10'
+                        : 'border border-secondary'
+                    "
+                    @dragover.prevent="dashboardDropHover = slot - 1"
+                    @drop.prevent="onDashboardSlotDrop($event, slot - 1)"
+                  >
+                    {{ slot }}
+                  </div>
                 </div>
               </div>
+              <div class="small text-secondary">Cada número é uma posição de inserção na lista de widgets.</div>
             </div>
-            <div class="col-lg-4">
-              <div class="card bg-body-tertiary border-secondary h-100">
-                <div class="card-header border-secondary">HTTP status</div>
-                <div class="card-body">
-                  <ul class="list-unstyled mb-0 small">
-                    <li
-                      v-for="row in statusBreakdown"
-                      :key="row[0]"
-                      class="d-flex justify-content-between py-1 border-bottom border-secondary"
+          </div>
+
+          <div class="row g-3 mb-4 align-items-stretch">
+            <div
+              v-for="item in layoutItems"
+              :key="item.uid"
+              :class="'col-12 col-lg-' + item.colSpan"
+              class="dashboard-widget-col"
+            >
+              <div class="card dashboard-widget-card bg-body-tertiary border-secondary h-100 d-flex flex-column">
+                <div
+                  class="card-header py-2 border-secondary d-flex flex-wrap align-items-center gap-2"
+                  draggable="true"
+                  @dragstart="onDashboardWidgetDragStart($event, item.uid)"
+                >
+                  <span class="text-secondary" style="cursor: grab" title="Arrastar para colunas 1–12">
+                    <i class="fas fa-grip-vertical" aria-hidden="true"></i>
+                  </span>
+                  <span class="flex-grow-1 small fw-semibold">{{ dashboardWidgetTitles[item.type] }}</span>
+                  <label class="small mb-0 text-secondary">Cols</label>
+                  <select
+                    class="form-select form-select-sm"
+                    style="width: 5.5rem"
+                    :value="item.colSpan"
+                    @change="setWidgetColSpan(item.uid, +$event.target.value)"
+                  >
+                    <option v-for="w in colSpanOptions" :key="w" :value="w">{{ w }}</option>
+                  </select>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-danger border-0 py-0 px-2"
+                    title="Remover do painel"
+                    @click="removeDashboardWidget(item.uid)"
+                  >
+                    <i class="fas fa-times" aria-hidden="true"></i>
+                  </button>
+                </div>
+
+                <template v-if="item.type === 'stat-count'">
+                  <div class="card-body py-3 flex-grow-1">
+                    <div class="text-secondary small">Requisições (filtro atual)</div>
+                    <div class="fs-4">{{ stats.count.toLocaleString('pt-BR') }}</div>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'stat-avg'">
+                  <div class="card-body py-3 flex-grow-1">
+                    <div class="text-secondary small">Tempo médio</div>
+                    <div class="fs-4">{{ stats.avgMs }} ms</div>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'stat-max'">
+                  <div class="card-body py-3 flex-grow-1">
+                    <div class="text-secondary small">Pico (max)</div>
+                    <div class="fs-4">{{ stats.maxMs }} ms</div>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'stat-range'">
+                  <div class="card-body py-3 flex-grow-1">
+                    <div class="text-secondary small">Intervalo</div>
+                    <div class="small">{{ fmtBucket(stats.minTs) }} → {{ fmtBucket(stats.maxTs) }}</div>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'chart-timeline'">
+                  <div
+                    class="card-body chart-card flex-grow-1 p-0 position-relative"
+                    :style="{ height: (item.heightPx || 340) + 'px' }"
+                  >
+                    <canvas v-if="timelineSeries" :ref="(el) => bindChartCanvas('timeline', el)"></canvas>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'chart-status'">
+                  <div
+                    class="card-body flex-grow-1 overflow-auto"
+                    :style="{ minHeight: (item.heightPx || 340) + 'px', maxHeight: (item.heightPx || 340) + 'px' }"
+                  >
+                    <ul class="list-unstyled mb-0 small">
+                      <li
+                        v-for="row in statusBreakdown"
+                        :key="row[0]"
+                        class="d-flex justify-content-between py-1 border-bottom border-secondary"
+                      >
+                        <span><code>{{ row[0] }}</code></span>
+                        <span>{{ row[1].toLocaleString('pt-BR') }}</span>
+                      </li>
+                    </ul>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'chart-endpoints'">
+                  <div
+                    class="card-body chart-card flex-grow-1 p-0"
+                    :style="{ height: (item.heightPx || 380) + 'px' }"
+                  >
+                    <canvas v-if="endpointChart" :ref="(el) => bindChartCanvas('endpoint', el)"></canvas>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'chart-ips'">
+                  <div class="card-body flex-grow-1 p-0">
+                    <p class="small text-secondary px-3 pt-2 mb-0">Limiar: ≥ {{ slowThresholdMs }} ms</p>
+                    <div
+                      class="chart-card px-0"
+                      :style="{ height: (item.heightPx || 380) + 'px' }"
                     >
-                      <span><code>{{ row[0] }}</code></span>
-                      <span>{{ row[1].toLocaleString('pt-BR') }}</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
+                      <canvas v-if="slowIpChart" :ref="(el) => bindChartCanvas('slowIp', el)"></canvas>
+                      <p v-else class="text-secondary small p-3 mb-0">Sem requisições acima do limite.</p>
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="item.type === 'table-slow'">
+                  <div class="card-body p-0 flex-grow-1 d-flex flex-column">
+                    <div class="table-responsive flex-grow-1" :style="{ maxHeight: (item.heightPx || 420) + 'px' }">
+                      <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
+                        <thead>
+                          <tr>
+                            <th>Quando</th>
+                            <th>IP</th>
+                            <th>Método</th>
+                            <th>Stem</th>
+                            <th>Status</th>
+                            <th class="text-end">ms</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(r, idx) in slowTable" :key="idx">
+                            <td class="text-nowrap small">{{ fmtBucket(r.timestamp) }}</td>
+                            <td class="small"><code>{{ r.clientIp }}</code></td>
+                            <td class="small">{{ r.method }}</td>
+                            <td class="small text-truncate" style="max-width: 280px" :title="r.stem">{{ r.stem }}</td>
+                            <td class="small">{{ r.status }}</td>
+                            <td class="text-end small">{{ r.timeTaken }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </template>
 
-          <div class="row g-4 mb-4">
-            <div class="col-lg-6">
-              <div class="card bg-body-tertiary border-secondary chart-card h-100">
-                <div class="card-header border-secondary">Endpoints com maior tempo médio (cs-uri-stem)</div>
-                <div v-if="endpointChart" class="card-body" style="height: 380px">
-                  <canvas ref="endpointCanvas"></canvas>
-                </div>
-              </div>
-            </div>
-            <div class="col-lg-6">
-              <div class="card bg-body-tertiary border-secondary chart-card h-100">
-                <div class="card-header border-secondary">
-                  IPs com mais requisições lentas (≥ {{ slowThresholdMs }} ms), ao longo do tempo
-                </div>
-                <div class="card-body" style="height: 380px">
-                  <canvas v-if="slowIpChart" ref="slowIpCanvas"></canvas>
-                  <p v-else class="text-secondary small mb-0">Sem requisições acima do limite no recorte atual.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card bg-body-tertiary border-secondary">
-            <div class="card-header border-secondary">
-              Requisições mais lentas (≥ {{ slowThresholdMs }} ms) — até 200 linhas
-            </div>
-            <div class="card-body p-0">
-              <div class="table-responsive" style="max-height: 420px">
-                <table class="table table-sm table-hover table-striped mb-0 table-sticky-head">
-                  <thead>
-                    <tr>
-                      <th>Quando</th>
-                      <th>IP</th>
-                      <th>Método</th>
-                      <th>Stem</th>
-                      <th>Status</th>
-                      <th class="text-end">ms</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(r, idx) in slowTable" :key="idx">
-                      <td class="text-nowrap small">{{ fmtBucket(r.timestamp) }}</td>
-                      <td class="small"><code>{{ r.clientIp }}</code></td>
-                      <td class="small">{{ r.method }}</td>
-                      <td class="small text-truncate" style="max-width: 280px" :title="r.stem">{{ r.stem }}</td>
-                      <td class="small">{{ r.status }}</td>
-                      <td class="text-end small">{{ r.timeTaken }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <div
+                  v-if="item.type.startsWith('chart-') || item.type === 'table-slow'"
+                  class="widget-resize-handle"
+                  title="Arrastar para alterar altura"
+                  @mousedown="startWidgetResize($event, item.uid)"
+                ></div>
               </div>
             </div>
           </div>
@@ -280,13 +351,35 @@
                   <thead class="sticky-top bg-body-tertiary border-bottom border-secondary">
                     <tr>
                       <th scope="col">Incluir</th>
-                      <th scope="col">Formato</th>
-                      <th scope="col" class="text-end">Req.</th>
+                      <th
+                        scope="col"
+                        class="table-sort-th"
+                        role="button"
+                        tabindex="0"
+                        title="Ordenar"
+                        @click="sortStaticModalColumn('ext')"
+                        @keydown.enter.prevent="sortStaticModalColumn('ext')"
+                      >
+                        Formato
+                        <i class="ms-1 small" :class="faSortClass(staticModalSort, 'ext')" aria-hidden="true"></i>
+                      </th>
+                      <th
+                        scope="col"
+                        class="table-sort-th text-end"
+                        role="button"
+                        tabindex="0"
+                        title="Ordenar"
+                        @click="sortStaticModalColumn('count')"
+                        @keydown.enter.prevent="sortStaticModalColumn('count')"
+                      >
+                        Req.
+                        <i class="ms-1 small" :class="faSortClass(staticModalSort, 'count')" aria-hidden="true"></i>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     <template v-if="discoveredStaticExtensions.length">
-                      <tr v-for="row in discoveredStaticExtensions" :key="row.ext">
+                      <tr v-for="row in sortedStaticModalRows" :key="row.ext">
                         <td>
                           <input
                             :checked="staticExtIncluded[row.ext] !== false"
@@ -312,14 +405,15 @@
             <section>
               <h6 class="text-secondary mb-2">Endpoints e páginas</h6>
               <p class="small text-secondary mb-2">
-                Lista o caminho <strong>sem o primeiro segmento</strong> (nome da aplicação no IIS). Marque ou desmarque
-                cada linha para incluir ou excluir da análise.
+                O caminho é o <code>cs-uri-stem</code> <strong>sem o primeiro segmento</strong> (nome da aplicação).
+                Desmarcar um caminho <strong>exclui em todas as aplicações</strong>. O filtro abaixo só restringe a lista
+                para achar stems de uma aplicação.
               </p>
               <div class="row g-2 mb-3 align-items-end">
                 <div class="col-md-6">
-                  <label class="form-label small mb-0">Aplicação</label>
+                  <label class="form-label small mb-0">Mostrar stems da aplicação</label>
                   <select v-model="modalEndpointApp" class="form-select form-select-sm">
-                    <option value="">— Selecione uma aplicação —</option>
+                    <option :value="modalAppAll">Todas as aplicações</option>
                     <option v-for="opt in applicationOptions" :key="opt.name" :value="opt.name">
                       {{ opt.name }} — {{ opt.count.toLocaleString('pt-BR') }} req.
                     </option>
@@ -329,7 +423,7 @@
                   <button
                     type="button"
                     class="btn btn-sm btn-outline-light"
-                    :disabled="!modalEndpointApp"
+                    :disabled="!modalEndpointList.length"
                     @click="toggleAllModalEndpoints(true)"
                   >
                     Marcar listados
@@ -337,7 +431,7 @@
                   <button
                     type="button"
                     class="btn btn-sm btn-outline-light"
-                    :disabled="!modalEndpointApp"
+                    :disabled="!modalEndpointList.length"
                     @click="toggleAllModalEndpoints(false)"
                   >
                     Desmarcar listados
@@ -349,35 +443,52 @@
                   <thead class="sticky-top bg-body-tertiary border-bottom border-secondary">
                     <tr>
                       <th scope="col">Incluir</th>
-                      <th scope="col"><code>cs-uri-stem</code> (sem app)</th>
-                      <th scope="col" class="text-end">Req.</th>
+                      <th
+                        scope="col"
+                        class="table-sort-th"
+                        role="button"
+                        tabindex="0"
+                        title="Ordenar"
+                        @click="sortEndpointModalColumn('relStem')"
+                        @keydown.enter.prevent="sortEndpointModalColumn('relStem')"
+                      >
+                        <code>cs-uri-stem</code> (sem app)
+                        <i class="ms-1 small" :class="faSortClass(endpointModalSort, 'relStem')" aria-hidden="true"></i>
+                      </th>
+                      <th
+                        scope="col"
+                        class="table-sort-th text-end"
+                        role="button"
+                        tabindex="0"
+                        title="Ordenar"
+                        @click="sortEndpointModalColumn('count')"
+                        @keydown.enter.prevent="sortEndpointModalColumn('count')"
+                      >
+                        Req.
+                        <i class="ms-1 small" :class="faSortClass(endpointModalSort, 'count')" aria-hidden="true"></i>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-if="!modalEndpointApp">
+                    <tr v-if="!modalEndpointList.length">
                       <td colspan="3" class="text-secondary small">
-                        Escolha uma aplicação acima para carregar os stems correspondentes.
+                        Nenhuma página/endpoint neste recorte (ou só há arquivos estáticos).
                       </td>
                     </tr>
-                    <template v-else-if="modalEndpointList.length">
-                      <tr v-for="row in modalEndpointList" :key="row.stateKey">
+                    <template v-else>
+                      <tr v-for="row in sortedEndpointModalRows" :key="row.relStem">
                         <td>
                           <input
-                            :checked="endpointStemIncluded[row.stateKey] !== false"
+                            :checked="endpointStemIncluded[row.relStem] !== false"
                             type="checkbox"
                             class="form-check-input"
-                            @change="endpointStemIncluded[row.stateKey] = $event.target.checked"
+                            @change="endpointStemIncluded[row.relStem] = $event.target.checked"
                           />
                         </td>
                         <td class="small text-break"><code>{{ row.relStem }}</code></td>
                         <td class="text-end">{{ row.count.toLocaleString('pt-BR') }}</td>
                       </tr>
                     </template>
-                    <tr v-else>
-                      <td colspan="3" class="text-secondary small">
-                        Nenhuma página/endpoint listável para esta aplicação (ou só há arquivos estáticos).
-                      </td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
