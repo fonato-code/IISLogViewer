@@ -65,7 +65,8 @@
     const time = row.time
     if (!date || !time) return null
 
-    const timestamp = Date.parse(`${date}T${time}`)
+    /** IIS grava data/hora em UTC (GMT); sem sufixo o JS interpretaria como horário local. */
+    const timestamp = Date.parse(`${date}T${time.trim()}Z`)
     const timeTaken = parseInt(row['time-taken'], 10)
     const scStatus = parseInt(row['sc-status'], 10)
     if (!Number.isFinite(timeTaken) || !Number.isFinite(timestamp)) return null
