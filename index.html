@@ -21,7 +21,13 @@
               <i class="fas fa-file-archive me-1" aria-hidden="true"></i>
               Importar ZIP / LOG
             </button>
-            <button v-if="rows.length" type="button" class="btn btn-outline-secondary btn-sm" @click="clearData">
+            <button
+              v-if="rows.length"
+              type="button"
+              class="btn btn-outline-secondary btn-sm"
+              :disabled="loading"
+              @click="clearData"
+            >
               Limpar
             </button>
           </div>
@@ -45,19 +51,6 @@
           <button type="button" class="btn btn-outline-primary" :disabled="loading" @click="onPickClick">
             Escolher arquivo
           </button>
-        </div>
-
-        <div v-if="loading" class="mb-4">
-          <div class="d-flex justify-content-between small text-secondary mb-1">
-            <span>Lendo e interpretando linhas…</span>
-            <span>{{ progress }}%</span>
-          </div>
-          <div class="progress" style="height: 6px">
-            <div
-              class="progress-bar progress-bar-striped progress-bar-animated"
-              :style="{ width: progress + '%' }"
-            ></div>
-          </div>
         </div>
 
         <div v-if="errorMsg" class="alert alert-danger" role="alert">{{ errorMsg }}</div>
@@ -111,8 +104,8 @@
             </div>
           </div>
 
-          <div class="row g-3 mb-4 align-items-end">
-            <div class="col-md-4">
+          <div class="row g-3 mb-2 align-items-end">
+            <div class="col-lg-3 col-md-6">
               <label class="form-label small mb-1">Lentidão ≥ (ms) — gráfico por IP e tabela</label>
               <input
                 v-model.number="slowThresholdMs"
@@ -122,17 +115,41 @@
                 class="form-control form-control-sm"
               />
             </div>
-            <div class="col-md-5">
-              <label class="form-label small mb-1">Filtrar IP cliente (contém)</label>
-              <input
-                v-model="ipFilter"
-                type="search"
-                class="form-control form-control-sm"
-                placeholder="ex: 200.195."
-              />
+            <div class="col-lg-4 col-md-6">
+              <label class="form-label small mb-1">Aplicação (1º segmento do <code>cs-uri-stem</code>)</label>
+              <select v-model="applicationFilter" class="form-select form-select-sm">
+                <option value="">Todas as aplicações</option>
+                <option v-for="opt in applicationOptions" :key="opt.name" :value="opt.name">
+                  {{ opt.name }} — {{ opt.count.toLocaleString('pt-BR') }} req.
+                </option>
+              </select>
             </div>
-            <div class="col-md-3 small text-secondary">
-              Janela temporal dos gráficos: ~{{ (bucketMs / 1000).toFixed(0) }}s
+            <div class="col-lg-5 col-md-12">
+              <label class="form-label small mb-1">Filtrar por IP cliente</label>
+              <select v-model="ipFilter" class="form-select form-select-sm">
+                <option value="">Todos os IPs</option>
+                <option v-for="opt in clientIpOptions" :key="opt.ip" :value="opt.ip">
+                  {{ opt.ip }} — {{ opt.count.toLocaleString('pt-BR') }} req.
+                </option>
+              </select>
+            </div>
+          </div>
+          <div class="row mb-2 align-items-end">
+            <div class="col-auto">
+              <button type="button" class="btn btn-outline-info btn-sm" @click="openStemModal">
+                <i class="fas fa-filter me-1" aria-hidden="true"></i>
+                Filtro <code>cs-uri-stem</code>
+                <span v-if="stemFilterExcludedCount > 0" class="badge bg-secondary ms-1">{{ stemFilterExcludedCount }}</span>
+              </button>
+            </div>
+            <div class="col small text-secondary">
+              Marque/desmarque tipos de arquivo estático e caminhos de páginas/endpoints no modal.
+            </div>
+          </div>
+          <div class="row mb-4">
+            <div class="col-12 small text-secondary">
+              Janela temporal dos gráficos: ~{{ (bucketMs / 1000).toFixed(0) }}s · filtros de aplicação, IP e stem são
+              combinados (E lógico).
             </div>
           </div>
 
@@ -229,6 +246,175 @@
           O formato segue o cabeçalho <code>#Fields</code> do IIS. Arquivos muito grandes usam amostragem automática.
         </p>
       </main>
+
+      <div
+        v-if="stemModalOpen"
+        class="stem-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="stemModalTitle"
+        @click.self="closeStemModal"
+      >
+        <div class="stem-modal-panel card border-secondary bg-body-tertiary shadow-lg" @click.stop>
+          <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span id="stemModalTitle" class="fw-semibold">Filtro por <code>cs-uri-stem</code></span>
+            <button type="button" class="btn-close btn-close-white" aria-label="Fechar" @click="closeStemModal"></button>
+          </div>
+          <div class="card-body overflow-auto flex-grow-1">
+            <section class="mb-4">
+              <h6 class="text-secondary mb-2">Arquivos estáticos (somente por extensão)</h6>
+              <p class="small text-secondary mb-2">
+                HTML, ASPX e extensões de página não entram nesta lista. Desmarque um formato para
+                <strong>excluir</strong> todas as requisições daquele tipo da análise.
+              </p>
+              <div class="d-flex gap-2 mb-2 flex-wrap">
+                <button type="button" class="btn btn-sm btn-outline-light" @click="toggleAllStaticExts(true)">
+                  Marcar todos
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-light" @click="toggleAllStaticExts(false)">
+                  Desmarcar todos
+                </button>
+              </div>
+              <div class="stem-modal-scroll border border-secondary rounded">
+                <table class="table table-sm table-striped mb-0">
+                  <thead class="sticky-top bg-body-tertiary border-bottom border-secondary">
+                    <tr>
+                      <th scope="col">Incluir</th>
+                      <th scope="col">Formato</th>
+                      <th scope="col" class="text-end">Req.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template v-if="discoveredStaticExtensions.length">
+                      <tr v-for="row in discoveredStaticExtensions" :key="row.ext">
+                        <td>
+                          <input
+                            :checked="staticExtIncluded[row.ext] !== false"
+                            type="checkbox"
+                            class="form-check-input"
+                            @change="staticExtIncluded[row.ext] = $event.target.checked"
+                          />
+                        </td>
+                        <td><code>.{{ row.ext }}</code></td>
+                        <td class="text-end">{{ row.count.toLocaleString('pt-BR') }}</td>
+                      </tr>
+                    </template>
+                    <tr v-else>
+                      <td colspan="3" class="text-secondary small">
+                        Nenhum recurso deste tipo encontrado no arquivo (ou amostra atual).
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section>
+              <h6 class="text-secondary mb-2">Endpoints e páginas</h6>
+              <p class="small text-secondary mb-2">
+                Lista o caminho <strong>sem o primeiro segmento</strong> (nome da aplicação no IIS). Marque ou desmarque
+                cada linha para incluir ou excluir da análise.
+              </p>
+              <div class="row g-2 mb-3 align-items-end">
+                <div class="col-md-6">
+                  <label class="form-label small mb-0">Aplicação</label>
+                  <select v-model="modalEndpointApp" class="form-select form-select-sm">
+                    <option value="">— Selecione uma aplicação —</option>
+                    <option v-for="opt in applicationOptions" :key="opt.name" :value="opt.name">
+                      {{ opt.name }} — {{ opt.count.toLocaleString('pt-BR') }} req.
+                    </option>
+                  </select>
+                </div>
+                <div class="col-md-6 d-flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-light"
+                    :disabled="!modalEndpointApp"
+                    @click="toggleAllModalEndpoints(true)"
+                  >
+                    Marcar listados
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-light"
+                    :disabled="!modalEndpointApp"
+                    @click="toggleAllModalEndpoints(false)"
+                  >
+                    Desmarcar listados
+                  </button>
+                </div>
+              </div>
+              <div class="stem-modal-scroll border border-secondary rounded">
+                <table class="table table-sm table-striped mb-0">
+                  <thead class="sticky-top bg-body-tertiary border-bottom border-secondary">
+                    <tr>
+                      <th scope="col">Incluir</th>
+                      <th scope="col"><code>cs-uri-stem</code> (sem app)</th>
+                      <th scope="col" class="text-end">Req.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="!modalEndpointApp">
+                      <td colspan="3" class="text-secondary small">
+                        Escolha uma aplicação acima para carregar os stems correspondentes.
+                      </td>
+                    </tr>
+                    <template v-else-if="modalEndpointList.length">
+                      <tr v-for="row in modalEndpointList" :key="row.stateKey">
+                        <td>
+                          <input
+                            :checked="endpointStemIncluded[row.stateKey] !== false"
+                            type="checkbox"
+                            class="form-check-input"
+                            @change="endpointStemIncluded[row.stateKey] = $event.target.checked"
+                          />
+                        </td>
+                        <td class="small text-break"><code>{{ row.relStem }}</code></td>
+                        <td class="text-end">{{ row.count.toLocaleString('pt-BR') }}</td>
+                      </tr>
+                    </template>
+                    <tr v-else>
+                      <td colspan="3" class="text-secondary small">
+                        Nenhuma página/endpoint listável para esta aplicação (ou só há arquivos estáticos).
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+          <div class="card-footer border-secondary d-flex justify-content-between flex-wrap gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetStemFiltersToDefault">
+              Restaurar padrão (tudo incluído)
+            </button>
+            <button type="button" class="btn btn-sm btn-primary" @click="closeStemModal">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="loading"
+        class="loading-overlay"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div class="loading-overlay-inner card border-secondary bg-body-tertiary shadow-lg p-4">
+          <div class="spinner-border text-primary mx-auto d-block mb-3" style="width: 3rem; height: 3rem" aria-hidden="true"></div>
+          <p class="fw-semibold mb-2">Importação em andamento</p>
+          <p class="small text-secondary mb-3">{{ loadingHint }}</p>
+          <div class="d-flex justify-content-between small text-secondary mb-1">
+            <span>Progresso estimado</span>
+            <span>{{ progress }}%</span>
+          </div>
+          <div class="progress">
+            <div
+              class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+              :style="{ width: progress + '%' }"
+            ></div>
+          </div>
+        </div>
+      </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>

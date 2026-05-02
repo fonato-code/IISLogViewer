@@ -10,7 +10,7 @@
     statusMix,
   } = window.IisLogCore
 
-  const { createApp, ref, shallowRef, computed, watch, nextTick } = Vue
+  const { createApp, ref, shallowRef, computed, watch, nextTick, reactive } = Vue
 
   const PALETTE = [
     'rgb(255, 99, 132)',
@@ -28,16 +28,246 @@
     Chart.defaults.borderColor = 'rgba(255,255,255,0.08)'
   }
 
+  /** Primeiro segmento de cs-uri-stem (ex.: /TOR_EPR_PARANA/... → TOR_EPR_PARANA) */
+  function stemApplication(stem) {
+    if (!stem || stem === '-') return ''
+    const parts = stem.split('/').filter(Boolean)
+    return parts[0] || ''
+  }
+
+  const APP_NONE = '(sem pasta raiz)'
+
+  /** Páginas / handlers dinâmicos — não entram no agrupamento “arquivo estático”. */
+  const PAGE_EXTENSIONS = new Set([
+    'html',
+    'htm',
+    'aspx',
+    'asp',
+    'php',
+    'cshtml',
+    'vbhtml',
+    'jsp',
+    'jspx',
+    'do',
+    'ashx',
+    'asmx',
+    'svc',
+    'axd',
+  ])
+
+  /** Recursos estáticos (por extensão) — tabela 1 do modal. */
+  const STATIC_ASSET_EXTENSIONS = new Set([
+    'js',
+    'mjs',
+    'cjs',
+    'css',
+    'scss',
+    'less',
+    'png',
+    'jpg',
+    'jpeg',
+    'gif',
+    'svg',
+    'webp',
+    'ico',
+    'bmp',
+    'woff',
+    'woff2',
+    'ttf',
+    'eot',
+    'otf',
+    'pdf',
+    'map',
+    'txt',
+    'zip',
+    'gz',
+    'rar',
+    '7z',
+    'mp4',
+    'webm',
+    'mp3',
+    'wav',
+    'csv',
+    'cur',
+    'swf',
+    'wasm',
+  ])
+
+  function getStemExtension(stem) {
+    if (!stem || stem === '-') return ''
+    const parts = stem.split('/').filter(Boolean)
+    const last = parts[parts.length - 1] || ''
+    const dot = last.lastIndexOf('.')
+    if (dot <= 0 || dot === last.length - 1) return ''
+    return last.slice(dot + 1).toLowerCase()
+  }
+
+  function isStaticAssetRow(stem, ext) {
+    if (!ext) return false
+    if (PAGE_EXTENSIONS.has(ext)) return false
+    return STATIC_ASSET_EXTENSIONS.has(ext)
+  }
+
+  function appKeyFromStem(stem) {
+    const s = stemApplication(stem)
+    return s || APP_NONE
+  }
+
+  function relativeStem(stem, appSeg) {
+    if (!stem || stem === '-') return stem || '-'
+    const raw = stem.startsWith('/') ? stem : `/${stem}`
+    const parts = raw.split('/').filter(Boolean)
+    if (!parts.length) return '/'
+    if (appSeg && parts[0] === appSeg) {
+      const rest = parts.slice(1)
+      return rest.length ? `/${rest.join('/')}` : '/'
+    }
+    return raw
+  }
+
+  function endpointStateKey(appKey, relStem) {
+    return `${appKey}::${relStem}`
+  }
+
   createApp({
     setup() {
       const rows = shallowRef([])
       const loading = ref(false)
       const progress = ref(0)
+      const loadingHint = ref('')
       const errorMsg = ref('')
       const meta = ref(null)
 
       const slowThresholdMs = ref(400)
+      /** IP selecionado; vazio = todos */
       const ipFilter = ref('')
+      /** Nome da aplicação (1º segmento) ou APP_NONE; vazio = todas */
+      const applicationFilter = ref('')
+
+      const applicationOptions = computed(() => {
+        const list = rows.value
+        if (!list.length) return []
+        const map = new Map()
+        for (const r of list) {
+          const seg = stemApplication(r.stem)
+          const key = seg || APP_NONE
+          map.set(key, (map.get(key) || 0) + 1)
+        }
+        return [...map.entries()]
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      })
+
+      const clientIpOptions = computed(() => {
+        const list = rows.value
+        if (!list.length) return []
+        const map = new Map()
+        for (const r of list) {
+          map.set(r.clientIp, (map.get(r.clientIp) || 0) + 1)
+        }
+        return [...map.entries()]
+          .map(([ip, count]) => ({ ip, count }))
+          .sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip))
+      })
+
+      const stemModalOpen = ref(false)
+      /** Aplicação escolhida na tabela de endpoints do modal (valor = applicationOptions.name, APP_NONE permitido) */
+      const modalEndpointApp = ref('')
+      const staticExtIncluded = reactive({})
+      const endpointStemIncluded = reactive({})
+
+      function clearStemFilters() {
+        Object.keys(staticExtIncluded).forEach((k) => delete staticExtIncluded[k])
+        Object.keys(endpointStemIncluded).forEach((k) => delete endpointStemIncluded[k])
+      }
+
+      function mergeStemFilterDefaults() {
+        const staticSeen = new Set()
+        const endpointSeen = new Set()
+        for (const r of rows.value) {
+          const stem = r.stem
+          const ext = getStemExtension(stem)
+          if (isStaticAssetRow(stem, ext)) {
+            staticSeen.add(ext)
+          } else {
+            const appSeg = stemApplication(stem)
+            const ak = appKeyFromStem(stem)
+            const rel = relativeStem(stem, appSeg)
+            endpointSeen.add(endpointStateKey(ak, rel))
+          }
+        }
+        for (const ext of staticSeen) {
+          if (!(ext in staticExtIncluded)) staticExtIncluded[ext] = true
+        }
+        Object.keys(staticExtIncluded).forEach((ext) => {
+          if (!staticSeen.has(ext)) delete staticExtIncluded[ext]
+        })
+        for (const k of endpointSeen) {
+          if (!(k in endpointStemIncluded)) endpointStemIncluded[k] = true
+        }
+        Object.keys(endpointStemIncluded).forEach((k) => {
+          if (!endpointSeen.has(k)) delete endpointStemIncluded[k]
+        })
+      }
+
+      function rowPassesStemFilter(row) {
+        const stem = row.stem
+        const ext = getStemExtension(stem)
+        if (isStaticAssetRow(stem, ext)) {
+          return staticExtIncluded[ext] !== false
+        }
+        const appSeg = stemApplication(stem)
+        const ak = appKeyFromStem(stem)
+        const rel = relativeStem(stem, appSeg)
+        const k = endpointStateKey(ak, rel)
+        return endpointStemIncluded[k] !== false
+      }
+
+      const discoveredStaticExtensions = computed(() => {
+        const map = new Map()
+        for (const r of rows.value) {
+          const ext = getStemExtension(r.stem)
+          if (!isStaticAssetRow(r.stem, ext)) continue
+          map.set(ext, (map.get(ext) || 0) + 1)
+        }
+        return [...map.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([ext, count]) => ({ ext, count }))
+      })
+
+      const modalEndpointList = computed(() => {
+        const app = modalEndpointApp.value
+        if (!app) return []
+        const map = new Map()
+        for (const r of rows.value) {
+          const stem = r.stem
+          const ext = getStemExtension(stem)
+          if (isStaticAssetRow(stem, ext)) continue
+          const ak = appKeyFromStem(stem)
+          if (ak !== app) continue
+          const appSeg = stemApplication(stem)
+          const rel = relativeStem(stem, appSeg)
+          map.set(rel, (map.get(rel) || 0) + 1)
+        }
+        return [...map.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([relStem, count]) => ({
+            relStem,
+            count,
+            stateKey: endpointStateKey(app, relStem),
+          }))
+      })
+
+      const stemFilterExcludedCount = computed(() => {
+        let n = 0
+        for (const ext of Object.keys(staticExtIncluded)) {
+          if (staticExtIncluded[ext] === false) n++
+        }
+        for (const k of Object.keys(endpointStemIncluded)) {
+          if (endpointStemIncluded[k] === false) n++
+        }
+        return n
+      })
 
       const fileInputRef = ref(null)
       const dragOver = ref(false)
@@ -75,10 +305,18 @@
       }
 
       const baseRows = computed(() => {
-        const list = rows.value
+        let list = rows.value
         const ip = ipFilter.value.trim()
-        if (!ip) return list
-        return list.filter((r) => r.clientIp.includes(ip))
+        if (ip) list = list.filter((r) => r.clientIp === ip)
+        const app = applicationFilter.value
+        if (app) {
+          list = list.filter((r) => {
+            const seg = stemApplication(r.stem)
+            const key = seg || APP_NONE
+            return key === app
+          })
+        }
+        return list.filter(rowPassesStemFilter)
       })
 
       const stats = computed(() => {
@@ -307,7 +545,7 @@
       }
 
       watch(
-        [stats, timelineSeries, endpointChart, slowIpChart, slowThresholdMs, ipFilter],
+        [stats, timelineSeries, endpointChart, slowIpChart, slowThresholdMs, ipFilter, applicationFilter],
         () => {
           updateCharts()
         },
@@ -318,8 +556,15 @@
         errorMsg.value = ''
         loading.value = true
         progress.value = 0
+        loadingHint.value =
+          'Analisando linhas do log. Em arquivos grandes isso pode levar vários minutos — a página não travou.'
         rows.value = []
         meta.value = null
+        ipFilter.value = ''
+        applicationFilter.value = ''
+        clearStemFilters()
+        stemModalOpen.value = false
+        modalEndpointApp.value = ''
         destroyCharts()
 
         try {
@@ -335,6 +580,7 @@
           })
 
           rows.value = result.rows
+          mergeStemFilterDefaults()
           meta.value = {
             filename,
             totalLines,
@@ -348,6 +594,7 @@
         } finally {
           loading.value = false
           progress.value = 100
+          loadingHint.value = ''
         }
       }
 
@@ -358,6 +605,9 @@
 
         try {
           if (name.toLowerCase().endsWith('.zip')) {
+            loading.value = true
+            progress.value = 0
+            loadingHint.value = 'Lendo o ZIP e extraindo os arquivos .log…'
             const zip = await JSZip.loadAsync(file)
             const chunks = []
             const paths = Object.keys(zip.files).sort()
@@ -369,6 +619,8 @@
             }
             if (!chunks.length) {
               errorMsg.value = 'Nenhum arquivo .log encontrado dentro do ZIP.'
+              loading.value = false
+              loadingHint.value = ''
               return
             }
             await loadFromText(chunks.join('\n'), name)
@@ -376,6 +628,9 @@
           }
 
           if (name.toLowerCase().endsWith('.log')) {
+            loading.value = true
+            progress.value = 0
+            loadingHint.value = 'Lendo o arquivo de log…'
             const text = await file.text()
             await loadFromText(text, name)
             return
@@ -385,6 +640,7 @@
         } catch (e) {
           errorMsg.value = e?.message || String(e)
           loading.value = false
+          loadingHint.value = ''
         }
       }
 
@@ -408,17 +664,71 @@
         rows.value = []
         meta.value = null
         errorMsg.value = ''
+        ipFilter.value = ''
+        applicationFilter.value = ''
+        clearStemFilters()
+        stemModalOpen.value = false
+        modalEndpointApp.value = ''
         destroyCharts()
+      }
+
+      function openStemModal() {
+        stemModalOpen.value = true
+        if (!modalEndpointApp.value && applicationFilter.value) {
+          modalEndpointApp.value = applicationFilter.value
+        }
+      }
+
+      function closeStemModal() {
+        stemModalOpen.value = false
+      }
+
+      function toggleAllStaticExts(on) {
+        for (const row of discoveredStaticExtensions.value) {
+          staticExtIncluded[row.ext] = on
+        }
+      }
+
+      function toggleAllModalEndpoints(on) {
+        for (const row of modalEndpointList.value) {
+          endpointStemIncluded[row.stateKey] = on
+        }
+      }
+
+      function resetStemFiltersToDefault() {
+        mergeStemFilterDefaults()
+        for (const row of discoveredStaticExtensions.value) {
+          staticExtIncluded[row.ext] = true
+        }
+        Object.keys(endpointStemIncluded).forEach((k) => {
+          endpointStemIncluded[k] = true
+        })
       }
 
       return {
         rows,
         loading,
+        loadingHint,
         progress,
         errorMsg,
         meta,
         slowThresholdMs,
         ipFilter,
+        applicationFilter,
+        applicationOptions,
+        clientIpOptions,
+        stemModalOpen,
+        modalEndpointApp,
+        staticExtIncluded,
+        endpointStemIncluded,
+        discoveredStaticExtensions,
+        modalEndpointList,
+        stemFilterExcludedCount,
+        openStemModal,
+        closeStemModal,
+        toggleAllStaticExts,
+        toggleAllModalEndpoints,
+        resetStemFiltersToDefault,
         fileInputRef,
         dragOver,
         timelineCanvas,
