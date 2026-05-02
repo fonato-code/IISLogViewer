@@ -1484,12 +1484,24 @@
         [WIDGET_TYPES.TABLE_USER_AGENT]: 'Requisições por User-Agent (detalhado)',
       }
 
-      const chartCanvasEls = { timeline: null, endpoint: null, slowIp: null, pieIp: null, pieApp: null }
+      const chartCanvasEls = {
+        timeline: null,
+        endpoint: null,
+        slowIp: null,
+        pieIp: null,
+        pieApp: null,
+        stemTimeline: null,
+      }
 
       function bindChartCanvas(kind, el) {
         const prev = chartCanvasEls[kind]
         chartCanvasEls[kind] = el || null
         if (prev !== chartCanvasEls[kind]) nextTick(() => updateCharts())
+      }
+
+      function bindStemTimelineChart(el) {
+        chartCanvasEls.stemTimeline = el || null
+        nextTick(() => refreshStemTimelineChart())
       }
 
       function parseDragPayload(ev) {
@@ -1798,6 +1810,7 @@
       let chartSlowIp = null
       let chartPieIp = null
       let chartPieApp = null
+      let chartStemTimeline = null
 
       function fmtBucket(ts) {
         return new Date(ts).toLocaleString('pt-BR', {
@@ -1828,6 +1841,10 @@
         if (chartPieApp) {
           chartPieApp.destroy()
           chartPieApp = null
+        }
+        if (chartStemTimeline) {
+          chartStemTimeline.destroy()
+          chartStemTimeline = null
         }
       }
 
@@ -1988,6 +2005,49 @@
         else arr.sort((a, b) => b.max - a.max)
         return arr.slice(0, 200)
       })
+
+      const stemTimelineModalOpen = ref(false)
+      const stemTimelineMethod = ref('')
+      const stemTimelineStem = ref('')
+
+      const stemTimelineSeries = computed(() => {
+        if (!stemTimelineModalOpen.value) return null
+        const m = stemTimelineMethod.value
+        const s = stemTimelineStem.value
+        if (!m || !s) return null
+        const useGroup = heavyUriUseGrouping.value
+        const list = baseRows.value.filter((r) => {
+          const sk = useGroup ? displayStemForGroupedChart(r) : r.stem
+          return r.method === m && sk === s
+        })
+        if (!list.length) return null
+        const b = timelineBuckets(list, bucketMs.value)
+        return {
+          labels: b.map((x) => fmtBucket(x.t)),
+          bucketTs: b.map((x) => x.t),
+          avgMs: b.map((x) => x.avg),
+          maxMs: b.map((x) => x.max),
+          minMs: b.map((x) => x.min),
+          counts: b.map((x) => x.count),
+        }
+      })
+
+      function openStemTimelineModal(method, stem) {
+        stemTimelineMethod.value = method || ''
+        stemTimelineStem.value = stem || ''
+        stemTimelineModalOpen.value = true
+      }
+
+      function closeStemTimelineModal() {
+        if (chartStemTimeline) {
+          chartStemTimeline.destroy()
+          chartStemTimeline = null
+        }
+        chartCanvasEls.stemTimeline = null
+        stemTimelineModalOpen.value = false
+        stemTimelineMethod.value = ''
+        stemTimelineStem.value = ''
+      }
 
       const pieIpChart = computed(() => {
         const list = baseRows.value
@@ -2465,6 +2525,29 @@
               indexAxis: 'y',
               responsive: true,
               maintainAspectRatio: false,
+              interaction: { mode: 'nearest', intersect: true },
+              onHover: (e, els, ch) => {
+                const c = ch?.canvas
+                if (!c) return
+                if (layoutEditMode.value) {
+                  c.style.cursor = 'default'
+                  return
+                }
+                c.style.cursor = els?.length ? 'pointer' : 'default'
+              },
+              onClick: (e, els, ch) => {
+                if (layoutEditMode.value) return
+                let idx = els?.[0]?.index
+                if (idx == null) {
+                  const found = ch.getElementsAtEventForMode(e, 'nearest', { intersect: true }, true)
+                  idx = found?.[0]?.index
+                }
+                if (idx == null || idx < 0) return
+                const ecNow = endpointChart.value
+                const d = ecNow?.detail?.[idx]
+                if (!d) return
+                openStemTimelineModal(d.method, d.stem)
+              },
               plugins: { legend: { display: false } },
               scales: {
                 x: {
@@ -2640,6 +2723,83 @@
         }
       }
 
+      function refreshStemTimelineChart() {
+        if (typeof Chart === 'undefined') return
+        const c = chartCanvasEls.stemTimeline
+        if (chartStemTimeline) {
+          chartStemTimeline.destroy()
+          chartStemTimeline = null
+        }
+        if (!stemTimelineModalOpen.value || !c) return
+        const s = stemTimelineSeries.value
+        if (!s?.labels?.length) return
+
+        const textColor = '#dee2e6'
+        const grid = 'rgba(255,255,255,0.06)'
+        chartStemTimeline = new Chart(c, {
+          type: 'line',
+          data: {
+            labels: s.labels,
+            datasets: [
+              {
+                label: 'Média (ms)',
+                data: s.avgMs,
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.15)',
+                fill: true,
+                tension: 0.2,
+                pointRadius: 0,
+              },
+              {
+                label: 'Máximo (ms)',
+                data: s.maxMs,
+                borderColor: 'rgb(255, 159, 64)',
+                backgroundColor: 'transparent',
+                tension: 0.2,
+                pointRadius: 0,
+              },
+              {
+                label: 'Mínimo (ms)',
+                data: s.minMs,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'transparent',
+                tension: 0.2,
+                pointRadius: 0,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { labels: { color: textColor } },
+              tooltip: {
+                callbacks: {
+                  afterBody(tooltipItems) {
+                    const i = tooltipItems[0]?.dataIndex
+                    if (i == null) return ''
+                    const n = s.counts[i]
+                    return n != null ? `Requisições no bucket: ${n.toLocaleString('pt-BR')}` : ''
+                  },
+                },
+              },
+            },
+            scales: {
+              x: {
+                ticks: { color: textColor, maxRotation: 45, autoSkip: true, maxTicksLimit: 14 },
+                grid: { color: grid },
+              },
+              y: {
+                title: { display: true, text: 'time-taken (ms)', color: textColor },
+                ticks: { color: textColor },
+                grid: { color: grid },
+              },
+            },
+          },
+        })
+      }
+
       function fmtPercent(n) {
         if (!Number.isFinite(n)) return '—'
         return `${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`
@@ -2666,6 +2826,7 @@
           chartSlowIp?.resize()
           chartPieIp?.resize()
           chartPieApp?.resize()
+          chartStemTimeline?.resize()
         })
       })
 
@@ -2686,11 +2847,29 @@
         else window.removeEventListener('keydown', onRequestDetailEscapeKey)
       })
 
+      function onStemTimelineEscapeKey(e) {
+        if (e.key === 'Escape' && stemTimelineModalOpen.value) closeStemTimelineModal()
+      }
+
+      watch(stemTimelineModalOpen, (open) => {
+        if (open) window.addEventListener('keydown', onStemTimelineEscapeKey)
+        else window.removeEventListener('keydown', onStemTimelineEscapeKey)
+      })
+
+      watch(
+        [stemTimelineModalOpen, stemTimelineSeries, bucketMs],
+        () => {
+          nextTick(() => refreshStemTimelineChart())
+        },
+        { flush: 'post' },
+      )
+
       onUnmounted(() => {
         document.body.classList.remove('iis-layout-arranging')
         document.body.style.overflow = ''
         window.removeEventListener('keydown', onFullscreenEscapeKey)
         window.removeEventListener('keydown', onRequestDetailEscapeKey)
+        window.removeEventListener('keydown', onStemTimelineEscapeKey)
       })
 
       watch(
@@ -2724,6 +2903,7 @@
         errorMsg.value = ''
         loading.value = true
         progress.value = 0
+        closeStemTimelineModal()
         loadingHint.value =
           'Analisando linhas do log. Em arquivos grandes isso pode levar vários minutos — a página não travou.'
         rows.value = []
@@ -2832,6 +3012,7 @@
       }
 
       function clearData() {
+        closeStemTimelineModal()
         rows.value = []
         meta.value = null
         errorMsg.value = ''
@@ -2994,6 +3175,13 @@
         requestDetailNextPage,
         onRequestDetailPageSizeChange,
         closeRequestDetailModal,
+        stemTimelineModalOpen,
+        stemTimelineMethod,
+        stemTimelineStem,
+        stemTimelineSeries,
+        openStemTimelineModal,
+        closeStemTimelineModal,
+        bindStemTimelineChart,
         toggleAllStaticExts,
         toggleAllModalEndpoints,
         resetStemFiltersToDefault,

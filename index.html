@@ -475,13 +475,19 @@
                   </div>
                 </template>
                 <template v-else-if="item.type === 'chart-endpoints'">
-                  <div
-                    class="card-body chart-card flex-grow-1 p-0"
-                    :style="
-                      expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 380) + 'px' }
-                    "
-                  >
-                    <canvas v-if="endpointChart" :ref="(el) => bindChartCanvas('endpoint', el)"></canvas>
+                  <div class="card-body flex-grow-1 p-0 d-flex flex-column min-h-0-flex">
+                    <p class="small text-secondary px-3 pt-2 mb-0 flex-shrink-0">
+                      Clique numa barra para a linha do tempo (mín / máx / médio) daquele
+                      <code>cs-uri-stem</code> — mesmo agrupamento do interruptor «Agrupar» no bloco TOP 200.
+                    </p>
+                    <div
+                      class="chart-card flex-grow-1 min-h-0-flex"
+                      :style="
+                        expandedWidgetUid === item.uid ? {} : { height: (item.heightPx || 380) + 'px' }
+                      "
+                    >
+                      <canvas v-if="endpointChart" :ref="(el) => bindChartCanvas('endpoint', el)"></canvas>
+                    </div>
                   </div>
                 </template>
                 <template v-else-if="item.type === 'chart-ips'">
@@ -665,6 +671,10 @@
                       </div>
                     </div>
                     <div class="px-3 pt-2 flex-shrink-0">
+                      <p class="small text-secondary mb-2">
+                        Clique no <code>cs-uri-stem</code> de uma linha para abrir a linha do tempo (mín / máx / médio por
+                        bucket), no mesmo critério do interruptor «Agrupar».
+                      </p>
                       <div class="iis-dt-toolbar d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
                         <div class="d-flex align-items-center gap-2 flex-wrap">
                           <select
@@ -729,7 +739,14 @@
                             </td>
                             <td class="small text-nowrap">{{ row.method }}</td>
                             <td class="small text-truncate" style="max-width: min(520px, 55vw)" :title="row.stem">
-                              <code>{{ row.stem }}</code>
+                              <code
+                                class="iis-stem-timeline-link"
+                                role="button"
+                                tabindex="0"
+                                :title="'Linha do tempo: ' + row.stem"
+                                @click.stop="openStemTimelineModal(row.method, row.stem)"
+                                @keydown.enter.prevent="openStemTimelineModal(row.method, row.stem)"
+                              >{{ row.stem }}</code>
                             </td>
                             <td class="text-end small">{{ row.min.toLocaleString('pt-BR') }}</td>
                             <td class="text-end small">{{ row.max.toLocaleString('pt-BR') }}</td>
@@ -1553,6 +1570,41 @@
               Ordenação inicial
             </button>
             <button type="button" class="btn btn-sm btn-primary" @click="closeRequestDetailModal">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="stemTimelineModalOpen"
+        class="stem-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="stemTimelineModalTitle"
+        @click.self="closeStemTimelineModal"
+      >
+        <div class="stem-modal-panel card border-secondary bg-body-tertiary shadow-lg" @click.stop style="max-width: min(960px, 100vw - 2rem)">
+          <div class="card-header border-secondary d-flex justify-content-between align-items-start flex-wrap gap-2">
+            <span id="stemTimelineModalTitle" class="fw-semibold small">
+              Linha do tempo —
+              <code>{{ stemTimelineMethod }}</code>
+              <code class="d-inline-block text-break ms-1" style="max-width: min(72ch, 85vw)">{{ stemTimelineStem }}</code>
+            </span>
+            <button type="button" class="btn-close btn-close-white" aria-label="Fechar" @click="closeStemTimelineModal"></button>
+          </div>
+          <div class="card-body">
+            <p class="small text-secondary mb-2">
+              Mesmo tamanho de bucket da análise principal (~{{ Math.round(bucketMs / 1000) }} s). Séries: mínimo, máximo e
+              média de <code>time-taken</code> por intervalo (critério igual ao interruptor «Agrupar» no bloco TOP 200).
+            </p>
+            <p v-if="!stemTimelineSeries" class="small text-warning mb-0">
+              Nenhuma requisição encontrada para este stem no filtro atual.
+            </p>
+            <div v-else class="chart-card border border-secondary rounded" style="height: min(52vh, 420px); min-height: 280px">
+              <canvas :ref="(el) => bindStemTimelineChart(el)"></canvas>
+            </div>
+          </div>
+          <div class="card-footer border-secondary text-end">
+            <button type="button" class="btn btn-sm btn-primary" @click="closeStemTimelineModal">Fechar</button>
           </div>
         </div>
       </div>

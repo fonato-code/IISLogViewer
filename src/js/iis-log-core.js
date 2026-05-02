@@ -176,20 +176,23 @@
       const k = bucketKey(r.timestamp, bucketMs)
       let b = map.get(k)
       if (!b) {
-        b = { sum: 0, max: 0, count: 0 }
+        b = { sum: 0, max: 0, min: Number.POSITIVE_INFINITY, count: 0 }
         map.set(k, b)
       }
       b.sum += r.timeTaken
       b.max = Math.max(b.max, r.timeTaken)
+      b.min = Math.min(b.min, r.timeTaken)
       b.count += 1
     }
     const keys = [...map.keys()].sort((a, b) => a - b)
     return keys.map((k) => {
       const b = map.get(k)
+      const minMs = b.count && Number.isFinite(b.min) ? b.min : 0
       return {
         t: k,
         avg: b.count ? Math.round(b.sum / b.count) : 0,
         max: b.max,
+        min: minMs,
         count: b.count,
       }
     })

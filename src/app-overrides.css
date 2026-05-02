@@ -451,3 +451,13 @@ body.iis-layout-arranging .dashboard-dd-strip-hint {
 .iis-status-drillable:hover {
   background: rgba(var(--bs-primary-rgb), 0.12);
 }
+
+.iis-stem-timeline-link {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.15em;
+}
+
+.iis-stem-timeline-link:hover {
+  color: var(--bs-info);
+}
