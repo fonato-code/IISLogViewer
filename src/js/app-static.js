@@ -53,6 +53,18 @@
   const DASHBOARD_STORAGE_KEY = 'iis-log-viewer-dashboard-layout-v1'
   const PARSE_SETTINGS_STORAGE_KEY = 'iis-log-viewer-parse-settings-v1'
   const ENDPOINT_GROUPS_STORAGE_KEY = 'iis-log-viewer-endpoint-groups-v1'
+  const SESSION_FILTERS_STORAGE_KEY = 'iis-log-viewer-session-filters-v1'
+
+  function readSessionFiltersPayload() {
+    try {
+      const raw = sessionStorage.getItem(SESSION_FILTERS_STORAGE_KEY)
+      if (!raw) return null
+      const data = JSON.parse(raw)
+      return data && typeof data === 'object' ? data : null
+    } catch (_) {
+      return null
+    }
+  }
 
   /** Endpoints SignalR “barulho” — iniciam desmarcados no filtro stem. */
   function isDefaultExcludedSignalrRel(rel) {
@@ -424,6 +436,7 @@
           localStorage.setItem(ENDPOINT_GROUPS_STORAGE_KEY, JSON.stringify(endpointGroups.value))
         } catch (_) {}
         mergeStemFilterDefaults()
+        restoreSessionFiltersAfterMerge()
       }
 
       const endpointGroupNewInput = ref('')
@@ -586,6 +599,75 @@
           if (!endpointSeen.has(k)) delete endpointStemIncluded[k]
         })
       }
+
+      let sessionFiltersPersistTimer = null
+      function persistSessionFilters() {
+        if (sessionFiltersPersistTimer) clearTimeout(sessionFiltersPersistTimer)
+        sessionFiltersPersistTimer = setTimeout(() => {
+          sessionFiltersPersistTimer = null
+          try {
+            let staticSnap = { ...staticExtIncluded }
+            let endpointSnap = { ...endpointStemIncluded }
+            if (!rows.value.length) {
+              const prev = readSessionFiltersPayload()
+              if (prev?.staticExtIncluded && typeof prev.staticExtIncluded === 'object')
+                staticSnap = { ...prev.staticExtIncluded }
+              if (prev?.endpointStemIncluded && typeof prev.endpointStemIncluded === 'object')
+                endpointSnap = { ...prev.endpointStemIncluded }
+            }
+            sessionStorage.setItem(
+              SESSION_FILTERS_STORAGE_KEY,
+              JSON.stringify({
+                staticExtIncluded: staticSnap,
+                endpointStemIncluded: endpointSnap,
+                ipFilter: ipFilter.value,
+                applicationFilter: applicationFilter.value,
+                slowThresholdMs: slowThresholdMs.value,
+                modalEndpointApp: modalEndpointApp.value,
+              }),
+            )
+          } catch (_) {}
+        }, 80)
+      }
+
+      function restoreSessionFiltersAfterMerge() {
+        const data = readSessionFiltersPayload()
+        if (!data) return
+        if (data.staticExtIncluded && typeof data.staticExtIncluded === 'object') {
+          for (const [k, v] of Object.entries(data.staticExtIncluded)) {
+            if (k in staticExtIncluded && typeof v === 'boolean') staticExtIncluded[k] = v
+          }
+        }
+        if (data.endpointStemIncluded && typeof data.endpointStemIncluded === 'object') {
+          for (const [k, v] of Object.entries(data.endpointStemIncluded)) {
+            if (k in endpointStemIncluded && typeof v === 'boolean') endpointStemIncluded[k] = v
+          }
+        }
+        if (typeof data.ipFilter === 'string') ipFilter.value = data.ipFilter
+        if (typeof data.applicationFilter === 'string') applicationFilter.value = data.applicationFilter
+        if (typeof data.slowThresholdMs === 'number' && Number.isFinite(data.slowThresholdMs))
+          slowThresholdMs.value = data.slowThresholdMs
+        if (typeof data.modalEndpointApp === 'string') modalEndpointApp.value = data.modalEndpointApp
+      }
+
+      function hydrateSessionFiltersUiOnly() {
+        const data = readSessionFiltersPayload()
+        if (!data) return
+        if (typeof data.ipFilter === 'string') ipFilter.value = data.ipFilter
+        if (typeof data.applicationFilter === 'string') applicationFilter.value = data.applicationFilter
+        if (typeof data.slowThresholdMs === 'number' && Number.isFinite(data.slowThresholdMs))
+          slowThresholdMs.value = data.slowThresholdMs
+        if (typeof data.modalEndpointApp === 'string') modalEndpointApp.value = data.modalEndpointApp
+      }
+
+      hydrateSessionFiltersUiOnly()
+
+      watch(ipFilter, persistSessionFilters)
+      watch(applicationFilter, persistSessionFilters)
+      watch(slowThresholdMs, persistSessionFilters)
+      watch(modalEndpointApp, persistSessionFilters)
+      watch(staticExtIncluded, persistSessionFilters, { deep: true })
+      watch(endpointStemIncluded, persistSessionFilters, { deep: true })
 
       function rowPassesStemFilter(row) {
         const stem = row.stem
@@ -1364,8 +1446,6 @@
           'Analisando linhas do log. Em arquivos grandes isso pode levar vários minutos — a página não travou.'
         rows.value = []
         meta.value = null
-        ipFilter.value = ''
-        applicationFilter.value = ''
         clearStemFilters()
         stemModalOpen.value = false
         modalEndpointApp.value = MODAL_APP_ALL
@@ -1388,6 +1468,7 @@
 
           rows.value = result.rows
           mergeStemFilterDefaults()
+          restoreSessionFiltersAfterMerge()
           if (!dashboardWidgetCount()) initDashboardLayout()
           meta.value = {
             filename,
@@ -1484,6 +1565,9 @@
         expandedWidgetUid.value = null
         try {
           localStorage.removeItem(DASHBOARD_STORAGE_KEY)
+        } catch (_) {}
+        try {
+          sessionStorage.removeItem(SESSION_FILTERS_STORAGE_KEY)
         } catch (_) {}
         destroyCharts()
       }
