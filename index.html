@@ -381,7 +381,9 @@
                             <td class="text-nowrap small">{{ fmtBucket(r.timestamp) }}</td>
                             <td class="small"><code>{{ r.clientIp }}</code></td>
                             <td class="small">{{ r.method }}</td>
-                            <td class="small text-truncate" style="max-width: 280px" :title="r.stem">{{ r.stem }}</td>
+                            <td class="small text-truncate" style="max-width: 280px" :title="r.stemGrouped">
+                              {{ r.stemGrouped }}
+                            </td>
                             <td class="small">{{ r.status }}</td>
                             <td class="text-end small">{{ r.timeTaken }}</td>
                           </tr>
@@ -517,6 +519,89 @@
               </div>
             </section>
 
+            <section class="mb-4">
+              <h6 class="text-secondary mb-2">Agrupamentos de endpoint (prefixo)</h6>
+              <p class="small text-secondary mb-2">
+                Cadastre um prefixo no <strong>mesmo formato da coluna abaixo</strong> (caminho sem o primeiro segmento,
+                ex. <code>/api/Ocorrencia/Veiculos/Modelos</code>). Todas as URLs que continuarem esse path
+                (<code>…/Modelos/FOCUS</code>, <code>…/Modelos/FORD</code>, etc.) contam como <strong>um único</strong>
+                endpoint no filtro, no gráfico de lentidão por endpoint e na tabela de lentas. Se dois prefixos
+                casarem, vale o <strong>mais longo</strong>.
+              </p>
+              <div class="d-flex flex-wrap gap-2 mb-2">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-light"
+                  :disabled="endpointGroupAdding"
+                  @click="startAddEndpointGroup"
+                >
+                  <i class="fas fa-plus me-1" aria-hidden="true"></i>
+                  Novo agrupamento
+                </button>
+              </div>
+              <div v-if="endpointGroupAdding" class="border border-secondary rounded p-2 mb-3">
+                <label class="form-label small mb-1" for="endpointGroupNewInput">Prefixo (relativo, sem pasta da app)</label>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                  <input
+                    id="endpointGroupNewInput"
+                    v-model="endpointGroupNewInput"
+                    type="text"
+                    class="form-control form-control-sm flex-grow-1"
+                    style="min-width: 200px"
+                    placeholder="Ex.: /api/Ocorrencia/Veiculos/Modelos ou colar URL completa"
+                    @keydown.enter.prevent="saveNewEndpointGroup"
+                  />
+                  <button type="button" class="btn btn-sm btn-primary" @click="saveNewEndpointGroup">Salvar</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" @click="cancelAddEndpointGroup">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+              <ul
+                v-if="endpointGroups.length"
+                class="list-group list-group-flush border border-secondary rounded mb-0 small"
+              >
+                <li
+                  v-for="g in endpointGroups"
+                  :key="g.id"
+                  class="list-group-item bg-body-tertiary d-flex flex-wrap align-items-center gap-2 py-2"
+                >
+                  <template v-if="editingEndpointGroupId === g.id">
+                    <input
+                      v-model="editingEndpointGroupPrefix"
+                      type="text"
+                      class="form-control form-control-sm flex-grow-1"
+                      style="min-width: 180px"
+                      @keydown.enter.prevent="saveEditEndpointGroup"
+                    />
+                    <button type="button" class="btn btn-sm btn-primary" @click="saveEditEndpointGroup">Ok</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="cancelEditEndpointGroup">
+                      Cancelar
+                    </button>
+                  </template>
+                  <template v-else>
+                    <code
+                      class="flex-grow-1 text-break user-select-all mb-0"
+                      role="button"
+                      tabindex="0"
+                      title="Clique para editar"
+                      @click="startEditEndpointGroup(g)"
+                      @keydown.enter.prevent="startEditEndpointGroup(g)"
+                    >{{ g.prefix }}</code>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-danger"
+                      title="Remover agrupamento"
+                      @click="removeEndpointGroup(g.id)"
+                    >
+                      <i class="fas fa-trash-alt" aria-hidden="true"></i>
+                    </button>
+                  </template>
+                </li>
+              </ul>
+              <p v-else class="small text-secondary mb-0">Nenhum agrupamento cadastrado.</p>
+            </section>
+
             <section>
               <h6 class="text-secondary mb-2">Endpoints e páginas</h6>
               <p class="small text-secondary mb-2">
@@ -591,13 +676,13 @@
                       </td>
                     </tr>
                     <template v-else>
-                      <tr v-for="row in sortedEndpointModalRows" :key="row.relStem">
+                      <tr v-for="row in sortedEndpointModalRows" :key="row.stateKey">
                         <td>
                           <input
-                            :checked="endpointStemIncluded[row.relStem] !== false"
+                            :checked="endpointStemIncluded[row.stateKey] !== false"
                             type="checkbox"
                             class="form-check-input"
-                            @change="endpointStemIncluded[row.relStem] = $event.target.checked"
+                            @change="endpointStemIncluded[row.stateKey] = $event.target.checked"
                           />
                         </td>
                         <td class="small text-break"><code>{{ row.relStem }}</code></td>

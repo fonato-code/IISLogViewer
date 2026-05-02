@@ -52,6 +52,7 @@
 
   const DASHBOARD_STORAGE_KEY = 'iis-log-viewer-dashboard-layout-v1'
   const PARSE_SETTINGS_STORAGE_KEY = 'iis-log-viewer-parse-settings-v1'
+  const ENDPOINT_GROUPS_STORAGE_KEY = 'iis-log-viewer-endpoint-groups-v1'
 
   /** Endpoints SignalR “barulho” — iniciam desmarcados no filtro stem. */
   function isDefaultExcludedSignalrRel(rel) {
@@ -300,6 +301,24 @@
     return raw
   }
 
+  function normalizeEndpointGroupPrefix(raw) {
+    if (!raw || typeof raw !== 'string') return ''
+    let s = raw.trim()
+    if (!s) return ''
+    if (!s.startsWith('/')) s = `/${s}`
+    if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
+    return s
+  }
+
+  /** Path completo colado → mesma convenção do modal (sem 1º segmento / pasta da app). */
+  function userInputToEndpointRelPrefix(raw) {
+    const n = normalizeEndpointGroupPrefix(raw)
+    if (!n || n === '/') return n
+    const parts = n.split('/').filter(Boolean)
+    if (parts.length <= 1) return n
+    return `/${parts.slice(1).join('/')}`
+  }
+
   createApp({
     setup() {
       const rows = shallowRef([])
@@ -346,6 +365,138 @@
       const modalEndpointApp = ref(MODAL_APP_ALL)
       const staticExtIncluded = reactive({})
       const endpointStemIncluded = reactive({})
+
+      function loadEndpointGroupsFromStorage() {
+        try {
+          const raw = localStorage.getItem(ENDPOINT_GROUPS_STORAGE_KEY)
+          if (raw) {
+            const arr = JSON.parse(raw)
+            if (!Array.isArray(arr)) return []
+            const out = []
+            for (const x of arr) {
+              if (!x || !x.prefix) continue
+              const prefix = normalizeEndpointGroupPrefix(userInputToEndpointRelPrefix(String(x.prefix)))
+              if (!prefix) continue
+              out.push({
+                id: typeof x.id === 'string' && x.id ? x.id : `g-${Math.random().toString(36).slice(2, 10)}`,
+                prefix,
+              })
+            }
+            return out
+          }
+        } catch (_) {}
+        return []
+      }
+
+      const endpointGroups = ref(loadEndpointGroupsFromStorage())
+
+      const sortedEndpointGroupPrefixes = computed(() =>
+        [...endpointGroups.value]
+          .map((g) => g.prefix)
+          .filter(Boolean)
+          .sort((a, b) => b.length - a.length),
+      )
+
+      function canonicalEndpointRel(stem) {
+        if (!stem || stem === '-') return stem || '-'
+        const appSeg = stemApplication(stem)
+        const rel = relativeStem(stem, appSeg)
+        for (const P of sortedEndpointGroupPrefixes.value) {
+          if (!P) continue
+          if (rel === P || rel.startsWith(P + '/')) return P
+        }
+        return rel
+      }
+
+      /** Stem exibido no gráfico de endpoints (agrupa filhos sob o prefixo). */
+      function displayStemForGroupedChart(row) {
+        const appSeg = stemApplication(row.stem)
+        const canon = canonicalEndpointRel(row.stem)
+        const relRaw = relativeStem(row.stem, appSeg)
+        if (relRaw === canon) return row.stem
+        if (!appSeg || appSeg === APP_NONE) return canon
+        if (!canon || canon === '/') return `/${appSeg}`
+        return `/${appSeg}${canon}`
+      }
+
+      function persistEndpointGroups() {
+        try {
+          localStorage.setItem(ENDPOINT_GROUPS_STORAGE_KEY, JSON.stringify(endpointGroups.value))
+        } catch (_) {}
+        mergeStemFilterDefaults()
+      }
+
+      const endpointGroupNewInput = ref('')
+      const endpointGroupAdding = ref(false)
+      const editingEndpointGroupId = ref(null)
+      const editingEndpointGroupPrefix = ref('')
+
+      function startAddEndpointGroup() {
+        endpointGroupAdding.value = true
+        endpointGroupNewInput.value = ''
+      }
+
+      function cancelAddEndpointGroup() {
+        endpointGroupAdding.value = false
+        endpointGroupNewInput.value = ''
+      }
+
+      function saveNewEndpointGroup() {
+        const prefix = normalizeEndpointGroupPrefix(userInputToEndpointRelPrefix(endpointGroupNewInput.value))
+        if (!prefix) {
+          cancelAddEndpointGroup()
+          return
+        }
+        if (endpointGroups.value.some((g) => g.prefix === prefix)) {
+          cancelAddEndpointGroup()
+          return
+        }
+        endpointGroups.value = [
+          ...endpointGroups.value,
+          { id: `g-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`, prefix },
+        ]
+        persistEndpointGroups()
+        cancelAddEndpointGroup()
+      }
+
+      function removeEndpointGroup(id) {
+        endpointGroups.value = endpointGroups.value.filter((g) => g.id !== id)
+        if (editingEndpointGroupId.value === id) {
+          editingEndpointGroupId.value = null
+          editingEndpointGroupPrefix.value = ''
+        }
+        persistEndpointGroups()
+      }
+
+      function startEditEndpointGroup(g) {
+        editingEndpointGroupId.value = g.id
+        editingEndpointGroupPrefix.value = g.prefix
+      }
+
+      function cancelEditEndpointGroup() {
+        editingEndpointGroupId.value = null
+        editingEndpointGroupPrefix.value = ''
+      }
+
+      function saveEditEndpointGroup() {
+        const id = editingEndpointGroupId.value
+        if (!id) return
+        const prefix = normalizeEndpointGroupPrefix(userInputToEndpointRelPrefix(editingEndpointGroupPrefix.value))
+        if (!prefix) {
+          cancelEditEndpointGroup()
+          return
+        }
+        const others = endpointGroups.value.filter((g) => g.id !== id).some((g) => g.prefix === prefix)
+        if (others) {
+          cancelEditEndpointGroup()
+          return
+        }
+        endpointGroups.value = endpointGroups.value.map((g) =>
+          g.id === id ? { ...g, prefix } : g,
+        )
+        persistEndpointGroups()
+        cancelEditEndpointGroup()
+      }
 
       function loadParseSettingsFromStorage() {
         try {
@@ -417,9 +568,7 @@
           if (isStaticAssetRow(stem, ext)) {
             staticSeen.add(ext)
           } else {
-            const appSeg = stemApplication(stem)
-            const rel = relativeStem(stem, appSeg)
-            endpointSeen.add(rel)
+            endpointSeen.add(canonicalEndpointRel(stem))
           }
         }
         for (const ext of staticSeen) {
@@ -444,9 +593,8 @@
         if (isStaticAssetRow(stem, ext)) {
           return staticExtIncluded[ext] !== false
         }
-        const appSeg = stemApplication(stem)
-        const rel = relativeStem(stem, appSeg)
-        return endpointStemIncluded[rel] !== false
+        const canon = canonicalEndpointRel(stem)
+        return endpointStemIncluded[canon] !== false
       }
 
       const discoveredStaticExtensions = computed(() => {
@@ -480,11 +628,10 @@
           const stem = r.stem
           const ext = getStemExtension(stem)
           if (isStaticAssetRow(stem, ext)) continue
-          const appSeg = stemApplication(stem)
           const ak = appKeyFromStem(stem)
-          const rel = relativeStem(stem, appSeg)
+          const canon = canonicalEndpointRel(stem)
           if (app !== MODAL_APP_ALL && ak !== app) continue
-          map.set(rel, (map.get(rel) || 0) + 1)
+          map.set(canon, (map.get(canon) || 0) + 1)
         }
         return [...map.entries()].map(([relStem, count]) => ({
           relStem,
@@ -970,7 +1117,7 @@
       const endpointChart = computed(() => {
         const list = baseRows.value
         if (!list.length) return null
-        const top = topEndpoints(list, 14)
+        const top = topEndpoints(list, 14, (r) => displayStemForGroupedChart(r))
         return {
           labels: top.map((e) => (e.stem.length > 56 ? `${e.stem.slice(0, 54)}…` : e.stem)),
           values: top.map((e) => e.avg),
@@ -1003,6 +1150,10 @@
           .filter((r) => r.timeTaken >= th)
           .sort((a, b) => b.timeTaken - a.timeTaken)
           .slice(0, 200)
+          .map((r) => ({
+            ...r,
+            stemGrouped: displayStemForGroupedChart(r),
+          }))
       })
 
       async function updateCharts() {
@@ -1343,6 +1494,8 @@
 
       function closeStemModal() {
         stemModalOpen.value = false
+        cancelAddEndpointGroup()
+        cancelEditEndpointGroup()
       }
 
       function toggleAllStaticExts(on) {
@@ -1384,6 +1537,18 @@
         modalAppAll: MODAL_APP_ALL,
         staticExtIncluded,
         endpointStemIncluded,
+        endpointGroups,
+        endpointGroupNewInput,
+        endpointGroupAdding,
+        editingEndpointGroupId,
+        editingEndpointGroupPrefix,
+        startAddEndpointGroup,
+        cancelAddEndpointGroup,
+        saveNewEndpointGroup,
+        removeEndpointGroup,
+        startEditEndpointGroup,
+        saveEditEndpointGroup,
+        cancelEditEndpointGroup,
         discoveredStaticExtensions,
         modalEndpointList,
         sortedStaticModalRows,

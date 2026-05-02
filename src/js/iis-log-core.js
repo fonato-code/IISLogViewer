@@ -188,13 +188,15 @@
     })
   }
 
-  function topEndpoints(rows, limit = 15) {
+  function topEndpoints(rows, limit = 15, stemKeyFn) {
+    const keyStem = typeof stemKeyFn === 'function' ? stemKeyFn : (r) => r.stem
     const map = new Map()
     for (const r of rows) {
-      const key = `${r.method} ${r.stem}`
+      const stem = keyStem(r)
+      const key = `${r.method} ${stem}`
       let e = map.get(key)
       if (!e) {
-        e = { key, method: r.method, stem: r.stem, sum: 0, max: 0, count: 0 }
+        e = { key, method: r.method, stem, sum: 0, max: 0, count: 0 }
         map.set(key, e)
       }
       e.sum += r.timeTaken
