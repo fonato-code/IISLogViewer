@@ -157,6 +157,105 @@
     }
   }
 
+  function finalizeParseResult(fields, rows, maxRows, sampleEvery, lineNum) {
+    if (!fields) {
+      throw new Error('Cabeçalho #Fields não encontrado no arquivo.')
+    }
+    const need = ['date', 'time', 'cs-method', 'cs-uri-stem', 'c-ip', 'time-taken', 'sc-status']
+    const missing = need.filter((k) => !fields.includes(k))
+    return {
+      rows,
+      fields,
+      missingFields: missing,
+      truncated: rows.length >= maxRows,
+      sampleEvery,
+      nextStartLineNum: lineNum,
+    }
+  }
+
+  /**
+   * Parse a partir de bytes UTF-8 — não cria uma string com o arquivo inteiro
+   * (evita "Invalid string length" em logs muito grandes).
+   */
+  async function parseIisLogBytes(u8, options) {
+    const chunkSize = options.chunkSize ?? 12_000
+    const onProgress = options.onProgress ?? (() => {})
+    const maxRows = options.maxRows ?? 350_000
+    const sampleEvery = Math.max(1, options.sampleEvery | 0 || 1)
+    let lineNum = Math.max(0, options.startLineNum | 0 || 0)
+
+    const total = estimateLineCountBytes(u8)
+    const decoder = new TextDecoder('utf-8', { fatal: false })
+    let fields = null
+    const rows = []
+    let lineIndex = 0
+    let lineStart = 0
+    let b = 0
+    let linesThisChunk = 0
+    let stop = false
+
+    const feedLine = (rawLine) => {
+      if (!rawLine) return
+      const line = rawLine.replace(/^\uFEFF/, '')
+      if (/^#\s*fields:/i.test(line)) {
+        fields = parseFieldsDirective(line)
+        return
+      }
+      if (line.startsWith('#') || !fields) return
+      lineNum++
+      if (sampleEvery > 1 && lineNum % sampleEvery !== 0) return
+      const row = parseLine(line, fields)
+      if (row) {
+        rows.push(row)
+        if (rows.length >= maxRows) stop = true
+      }
+    }
+
+    const flushChunk = () =>
+      new Promise((resolve) => {
+        onProgress({
+          parsed: rows.length,
+          lineIndex,
+          totalLines: total,
+          lineNum,
+          sampled: sampleEvery > 1,
+        })
+        queueMicrotask(resolve)
+      })
+
+    while (b < u8.length && !stop) {
+      if (u8[b] === 10) {
+        const slice = u8.subarray(lineStart, b)
+        let raw = decoder.decode(slice)
+        if (raw.length && raw.charCodeAt(raw.length - 1) === 13) raw = raw.slice(0, -1)
+        lineIndex++
+        feedLine(raw)
+        if (stop) break
+        linesThisChunk++
+        lineStart = b + 1
+        if (linesThisChunk >= chunkSize) {
+          linesThisChunk = 0
+          await flushChunk()
+        }
+      }
+      b++
+    }
+
+    if (!stop && lineStart < u8.length) {
+      let raw = decoder.decode(u8.subarray(lineStart))
+      if (raw.length && raw.charCodeAt(raw.length - 1) === 13) raw = raw.slice(0, -1)
+      lineIndex++
+      feedLine(raw)
+    }
+
+    if (stop) {
+      lineIndex = total
+    }
+
+    await flushChunk()
+    return finalizeParseResult(fields, rows, maxRows, sampleEvery, lineNum)
+  }
+
   async function parseIisLogText(text, options) {
     const chunkSize = options.chunkSize ?? 12_000
     const onProgress = options.onProgress ?? (() => {})
@@ -207,20 +306,7 @@
       await flushChunk()
     }
 
-    if (!fields) {
-      throw new Error('Cabeçalho #Fields não encontrado no arquivo.')
-    }
-
-    const need = ['date', 'time', 'cs-method', 'cs-uri-stem', 'c-ip', 'time-taken', 'sc-status']
-    const missing = need.filter((k) => !fields.includes(k))
-    return {
-      rows,
-      fields,
-      missingFields: missing,
-      truncated: rows.length >= maxRows,
-      sampleEvery,
-      nextStartLineNum: lineNum,
-    }
+    return finalizeParseResult(fields, rows, maxRows, sampleEvery, lineNum)
   }
 
   function bucketKey(ts, bucketMs) {
@@ -342,6 +428,7 @@
   window.IisLogCore = {
     estimateLineCount,
     estimateLineCountBytes,
+    parseIisLogBytes,
     parseIisLogText,
     suggestBucketMs,
     timelineBuckets,

@@ -2,6 +2,7 @@
   const {
     estimateLineCount,
     estimateLineCountBytes,
+    parseIisLogBytes,
     parseIisLogText,
     suggestBucketMs,
     timelineBuckets,
@@ -11,6 +12,14 @@
     statusMix,
     statusSubMix,
   } = window.IisLogCore
+
+  /** Evita `push(...milhões)` — estoura pilha / limite de argumentos no JS. */
+  const ROW_APPEND_CHUNK = 8000
+  function appendParsedRows(target, source) {
+    for (let i = 0; i < source.length; i += ROW_APPEND_CHUNK) {
+      target.push(...source.slice(i, i + ROW_APPEND_CHUNK))
+    }
+  }
 
   const {
     createApp,
@@ -2950,6 +2959,58 @@
         }
       }
 
+      /** Log UTF-8 em memória como Uint8Array — suporta arquivos maiores que o limite de string do JS. */
+      async function loadFromUint8Log(u8, filename) {
+        errorMsg.value = ''
+        loading.value = true
+        progress.value = 0
+        closeStemTimelineModal()
+        loadingHint.value =
+          'Analisando linhas do log. Em arquivos grandes isso pode levar vários minutos — a página não travou.'
+        rows.value = []
+        meta.value = null
+        clearStemFilters()
+        stemModalOpen.value = false
+        modalEndpointApp.value = MODAL_APP_ALL
+        destroyCharts()
+
+        try {
+          const totalLines = estimateLineCountBytes(u8)
+          const sampleEvery =
+            !parseSamplingEnabled.value || totalLines <= parseTargetLines.value
+              ? 1
+              : Math.ceil(totalLines / parseTargetLines.value)
+
+          const result = await parseIisLogBytes(u8, {
+            sampleEvery,
+            maxRows: parseMaxRows.value,
+            onProgress(p) {
+              progress.value =
+                totalLines > 0 ? Math.min(99, Math.round((100 * p.lineIndex) / p.totalLines)) : 0
+            },
+          })
+
+          rows.value = result.rows
+          mergeStemFilterDefaults()
+          restoreSessionFiltersAfterMerge()
+          if (!dashboardWidgetCount()) initDashboardLayout()
+          meta.value = {
+            filename,
+            totalLines,
+            parsed: result.rows.length,
+            sampleEvery: result.sampleEvery,
+            truncated: result.truncated,
+            missingFields: result.missingFields,
+          }
+        } catch (e) {
+          errorMsg.value = e?.message || String(e)
+        } finally {
+          loading.value = false
+          progress.value = 100
+          loadingHint.value = ''
+        }
+      }
+
       async function consumeFile(file) {
         if (!file) return
         errorMsg.value = ''
@@ -3018,9 +3079,9 @@
                 if (!fileLines) continue
 
                 loadingHint.value = `Parseando ${p.split('/').pop() || p} (${fi + 1}/${logPaths.length})…`
-                const text = await zip.files[p].async('string')
+                const u8 = await zip.files[p].async('uint8array')
                 const remaining = maxRows - allRows.length
-                const result = await parseIisLogText(text, {
+                const result = await parseIisLogBytes(u8, {
                   sampleEvery,
                   maxRows: remaining,
                   startLineNum,
@@ -3032,7 +3093,7 @@
                 })
                 startLineNum = result.nextStartLineNum
                 lineOffset += fileLines
-                allRows.push(...result.rows)
+                appendParsedRows(allRows, result.rows)
                 lastMissing = result.missingFields
                 if (result.truncated) {
                   truncated = true
@@ -3066,8 +3127,8 @@
             loading.value = true
             progress.value = 0
             loadingHint.value = 'Lendo o arquivo de log…'
-            const text = await file.text()
-            await loadFromText(text, name)
+            const buf = await file.arrayBuffer()
+            await loadFromUint8Log(new Uint8Array(buf), name)
             return
           }
 
@@ -3377,6 +3438,7 @@
         iisWin32SubstatusLabel,
         fmtBucket,
         loadFromText,
+        loadFromUint8Log,
         consumeFile,
         onPickClick,
         onFileInput,
