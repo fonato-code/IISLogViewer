@@ -13,6 +13,17 @@
     return n
   }
 
+  /** Contagem de linhas em UTF-8 bruto (LF); evita decodificar o arquivo só para estimar tamanho. */
+  function estimateLineCountBytes(u8) {
+    if (!u8 || !u8.length) return 0
+    let n = 0
+    for (let i = 0; i < u8.length; i++) {
+      if (u8[i] === 10) n++
+    }
+    if (u8[u8.length - 1] !== 10) n++
+    return n
+  }
+
   function parseFieldsDirective(line) {
     const m = line.match(/^#\s*Fields:\s*(.+)$/i)
     if (!m) return null
@@ -151,12 +162,12 @@
     const onProgress = options.onProgress ?? (() => {})
     const maxRows = options.maxRows ?? 350_000
     const sampleEvery = Math.max(1, options.sampleEvery | 0 || 1)
+    let lineNum = Math.max(0, options.startLineNum | 0 || 0)
 
     const lines = text.split(/\r?\n/)
     let fields = null
     const rows = []
     let i = 0
-    let lineNum = 0
     const total = lines.length
 
     const flushChunk = () =>
@@ -208,6 +219,7 @@
       missingFields: missing,
       truncated: rows.length >= maxRows,
       sampleEvery,
+      nextStartLineNum: lineNum,
     }
   }
 
@@ -329,6 +341,7 @@
 
   window.IisLogCore = {
     estimateLineCount,
+    estimateLineCountBytes,
     parseIisLogText,
     suggestBucketMs,
     timelineBuckets,

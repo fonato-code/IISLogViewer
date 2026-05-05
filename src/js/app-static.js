@@ -1,6 +1,7 @@
 ;(function () {
   const {
     estimateLineCount,
+    estimateLineCountBytes,
     parseIisLogText,
     suggestBucketMs,
     timelineBuckets,
@@ -2960,21 +2961,104 @@
             progress.value = 0
             loadingHint.value = 'Lendo o ZIP e extraindo os arquivos .log…'
             const zip = await JSZip.loadAsync(file)
-            const chunks = []
-            const paths = Object.keys(zip.files).sort()
-            for (const path of paths) {
-              const entry = zip.files[path]
-              if (entry.dir) continue
-              if (!/\.log$/i.test(path)) continue
-              chunks.push(await entry.async('string'))
-            }
-            if (!chunks.length) {
+            const logPaths = Object.keys(zip.files)
+              .sort()
+              .filter((p) => {
+                const e = zip.files[p]
+                return !e.dir && /\.log$/i.test(p)
+              })
+            if (!logPaths.length) {
               errorMsg.value = 'Nenhum arquivo .log encontrado dentro do ZIP.'
               loading.value = false
               loadingHint.value = ''
               return
             }
-            await loadFromText(chunks.join('\n'), name)
+
+            loadingHint.value = 'Contando linhas nos .log (sem juntar tudo em memória)…'
+            const lineCounts = []
+            let totalLines = 0
+            for (const p of logPaths) {
+              const u8 = await zip.files[p].async('uint8array')
+              const c = estimateLineCountBytes(u8)
+              lineCounts.push(c)
+              totalLines += c
+            }
+
+            errorMsg.value = ''
+            closeStemTimelineModal()
+            loadingHint.value =
+              'Analisando linhas do log. Em arquivos grandes isso pode levar vários minutos — a página não travou.'
+            rows.value = []
+            meta.value = null
+            clearStemFilters()
+            stemModalOpen.value = false
+            modalEndpointApp.value = MODAL_APP_ALL
+            destroyCharts()
+
+            const sampleEvery =
+              !parseSamplingEnabled.value || totalLines <= parseTargetLines.value
+                ? 1
+                : Math.ceil(totalLines / parseTargetLines.value)
+
+            const allRows = []
+            let startLineNum = 0
+            let lineOffset = 0
+            let lastMissing = []
+            let truncated = false
+            const maxRows = parseMaxRows.value
+
+            try {
+              for (let fi = 0; fi < logPaths.length; fi++) {
+                if (allRows.length >= maxRows) {
+                  truncated = true
+                  break
+                }
+                const p = logPaths[fi]
+                const fileLines = lineCounts[fi]
+                if (!fileLines) continue
+
+                loadingHint.value = `Parseando ${p.split('/').pop() || p} (${fi + 1}/${logPaths.length})…`
+                const text = await zip.files[p].async('string')
+                const remaining = maxRows - allRows.length
+                const result = await parseIisLogText(text, {
+                  sampleEvery,
+                  maxRows: remaining,
+                  startLineNum,
+                  onProgress(pr) {
+                    const g = lineOffset + pr.lineIndex
+                    progress.value =
+                      totalLines > 0 ? Math.min(99, Math.round((100 * g) / totalLines)) : 0
+                  },
+                })
+                startLineNum = result.nextStartLineNum
+                lineOffset += fileLines
+                allRows.push(...result.rows)
+                lastMissing = result.missingFields
+                if (result.truncated) {
+                  truncated = true
+                  break
+                }
+              }
+
+              rows.value = allRows
+              mergeStemFilterDefaults()
+              restoreSessionFiltersAfterMerge()
+              if (!dashboardWidgetCount()) initDashboardLayout()
+              meta.value = {
+                filename: name,
+                totalLines,
+                parsed: allRows.length,
+                sampleEvery,
+                truncated,
+                missingFields: lastMissing || [],
+              }
+            } catch (e) {
+              errorMsg.value = e?.message || String(e)
+            } finally {
+              loading.value = false
+              progress.value = 100
+              loadingHint.value = ''
+            }
             return
           }
 
