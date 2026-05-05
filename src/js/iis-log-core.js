@@ -14,28 +14,20 @@
   }
 
   function parseFieldsDirective(line) {
-    const m = line.match(/^#Fields:\s*(.+)$/i)
+    const m = line.match(/^#\s*Fields:\s*(.+)$/i)
     if (!m) return null
     return m[1].trim().split(/\s+/).filter(Boolean)
   }
 
-  function parseLine(line, fields) {
-    if (!line || line.startsWith('#')) return null
-    const tokens = line.split(' ')
-    const n = fields.length
-    if (tokens.length < 9 + 6) return null
-
-    const tail = 6
-    const statusIdx = tokens.length - tail
-    const tailVals = tokens.slice(statusIdx)
-    if (!tailVals.every((t, i) => i < 3 || /^-?\d+$/.test(t))) return null
-
-    const refTok = tokens[statusIdx - 1]
-    let refStart = statusIdx - 1
+  /** Parte variável entre colunas fixas iniciais e o bloco final a partir de sc-status. */
+  function splitUaRefererMiddle(middleTokens) {
+    if (!middleTokens.length) return ['', '']
+    const refTok = middleTokens[middleTokens.length - 1]
+    let refStart = middleTokens.length - 1
     if (refTok && refTok !== '-' && !/^https?:\/\//i.test(refTok)) {
       let found = -1
-      for (let j = statusIdx - 1; j >= 9; j--) {
-        if (tokens[j] === '-' || /^https?:\/\//i.test(tokens[j])) {
+      for (let j = middleTokens.length - 1; j >= 0; j--) {
+        if (middleTokens[j] === '-' || /^https?:\/\//i.test(middleTokens[j])) {
           found = j
           break
         }
@@ -43,20 +35,79 @@
       if (found === -1) return null
       refStart = found
     }
+    const ua = middleTokens.slice(0, refStart).join(' ')
+    const referer = middleTokens.slice(refStart).join(' ')
+    return [ua, referer]
+  }
 
-    const ua = tokens.slice(9, refStart).join(' ')
-    const referer = tokens.slice(refStart, statusIdx).join(' ')
-    const head = tokens.slice(0, 9)
+  function looksLikeIpToken(s) {
+    if (!s) return false
+    return IP4.test(s) || s.includes(':')
+  }
 
-    if (!IP4.test(head[2]) || !IP4.test(head[8])) return null
+  function parseLine(line, fields) {
+    if (!line) return null
+    const trimmed = line.replace(/^\uFEFF/, '')
+    if (trimmed.startsWith('#')) return null
 
-    const values = [...head, ua, referer, ...tailVals]
-    if (values.length !== n) return null
+    const tokens = trimmed.split(' ')
+    const n = fields.length
+    const iUa = fields.indexOf('cs(User-Agent)')
+    const iRef = fields.indexOf('cs(Referer)')
+    const iSc = fields.indexOf('sc-status')
+    if (iSc < 0) return null
+
+    const tailCount = n - iSc
+    const headFieldEnd = iUa >= 0 ? iUa : iSc
+    if (tokens.length < headFieldEnd + tailCount) return null
+    const tailVals = tokens.slice(-tailCount)
+    if (tailVals.length !== tailCount) return null
+
+    const rest = tokens.slice(0, tokens.length - tailCount)
+
+    if (rest.length < headFieldEnd) return null
+    const headTokens = rest.slice(0, headFieldEnd)
+    const middleTokens = rest.slice(headFieldEnd)
+
+    let ua = ''
+    let referer = ''
+    if (iUa >= 0) {
+      if (iRef > iUa) {
+        const pair = splitUaRefererMiddle(middleTokens)
+        if (!pair) return null
+        ;[ua, referer] = pair
+      } else {
+        ua = middleTokens.join(' ')
+      }
+    } else if (middleTokens.length) {
+      return null
+    }
+
+    if (headTokens.length !== headFieldEnd) return null
+
+    const si = fields.indexOf('s-ip')
+    const ci = fields.indexOf('c-ip')
+    if (si >= 0 && si < headFieldEnd && !looksLikeIpToken(headTokens[si])) return null
+    if (ci >= 0 && ci < headFieldEnd && !looksLikeIpToken(headTokens[ci])) return null
 
     const row = {}
-    fields.forEach((f, i) => {
-      row[f] = values[i]
-    })
+    for (let fi = 0; fi < n; fi++) {
+      const name = fields[fi]
+      if (fi >= iSc) {
+        row[name] = tailVals[fi - iSc]
+      } else if (iUa >= 0 && fi < iUa) {
+        row[name] = headTokens[fi]
+      } else if (iUa < 0 && fi < iSc) {
+        row[name] = headTokens[fi]
+      } else if (fi === iUa && iUa >= 0) {
+        row[name] = ua
+      } else if (fi === iRef && iRef >= 0) {
+        row[name] = referer
+      } else {
+        return null
+      }
+    }
+
     return normalizeRow(row)
   }
 
@@ -112,9 +163,10 @@
       new Promise((resolve) => {
         const end = Math.min(i + chunkSize, total)
         for (; i < end; i++) {
-          const line = lines[i]
-          if (!line) continue
-          if (line.startsWith('#Fields:')) {
+          const raw = lines[i]
+          if (!raw) continue
+          const line = raw.replace(/^\uFEFF/, '')
+          if (/^#\s*fields:/i.test(line)) {
             fields = parseFieldsDirective(line)
             continue
           }
